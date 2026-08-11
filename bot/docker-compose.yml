@@ -1,0 +1,81 @@
+# Bot Auto-Order stack (PRD §19) — bot + Nginx (TLS) + PostgreSQL + Redis.
+# Postgres/Redis dapat dipindah ke host terkelola: hapus service-nya dan
+# sesuaikan DATABASE_URL / REDIS_URL di .env.
+name: bot-order
+
+services:
+  bot:
+    build: .
+    env_file:
+      - path: .env
+        required: false   # wajib diisi saat runtime; bot fail-fast jika kosong
+    environment:
+      # Override ke service compose; menang atas env_file.
+      DATABASE_URL: postgres://bot:bot@postgres:5432/bot?sslmode=disable
+      REDIS_URL: redis://redis:6379/3
+    expose:
+      - "8443"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [botnet]
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BOT_DOMAIN: ${BOT_DOMAIN:?set BOT_DOMAIN in .env}
+    volumes:
+      # Template nginx — BOT_DOMAIN di-substitusi otomatis oleh image resmi.
+      - ./nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      # Sertifikat TLS: default folder ./certs (fullchain.pem + privkey.pem).
+      # Alternatif Let's Encrypt di host: mount /etc/letsencrypt:/etc/letsencrypt:ro
+      #   lalu di nginx.conf pakai:
+      #   ssl_certificate /etc/letsencrypt/live/${BOT_DOMAIN}/fullchain.pem;
+      #   ssl_certificate_key /etc/letsencrypt/live/${BOT_DOMAIN}/privkey.pem;
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - bot
+    restart: unless-stopped
+    networks: [botnet]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: bot
+      POSTGRES_DB: bot
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [botnet]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [botnet]
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  botnet:

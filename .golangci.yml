@@ -1,0 +1,40 @@
+# .golangci.yml — golangci-lint (v1.64.x)
+#
+# Dipakai oleh: .githooks/pre-commit (file .go yang di-stage), pre-push (lint
+# penuh bot/), dan CI (.github/workflows/security.yml). Linter set disesuaikan
+# dengan aturan AGENTS.md §1.4 (type safety, unchecked errors) & §1.6#     (bodyclose pada HTTP client). Jangan melemahkan rule tanpa justifikasi.
+# Catatan: tanpa field `version` = format config v1 (golangci-lint v1.64.x).
+
+run:
+  timeout: 5m
+  # Hanya lint modul yang sedang aktif (bukan vendor).
+  tests: true
+
+linters:
+  enable:
+    - errcheck      # error tidak boleh dibuang diam-diam (AGENTS.md §1.4)
+    - gosimple      # simplify kode
+    - govet         # vet bawaan (sebagian besar rule bawaan)
+    - ineffassign   # assignment yang tidak terpakai
+    - staticcheck   # analisis statis lanjutan
+    - unused        # kode mati (AGENTS.md: tidak ada kode mati)
+    - misspell      # typo di komentar/string (kode lama panel banyak typo)
+    - bodyclose     # resp.Body wajib ditutup (AGENTS.md §1.6)
+
+issues:
+  # Aturan default golangci-lint ikut aktif (govet/errcheck/staticcheck).
+  exclude-rules:
+    # File test: error dari fake/helper sering disengaja diabaikan; bodyclose
+    # tidak relevan untuk httptest fixture.
+    - path: _test\.go
+      linters:
+        - bodyclose
+        - misspell
+    # CATATAN: modul root x-ui (upstream legacy) TIDAK di-lint di pre-commit/
+    # pre-push/CI — gate golangci-lint hanya untuk bot/. Rule berikut hanya
+    # berguna bila seseorang menjalankan lint manual pada modul root, agar
+    # gaya kode lama tidak mengunci (misspell/gosimple saja yang dikecualikan).
+    - path: (^|/)(web|config|database|logger|util|iplimit|xray|sub|middleware)/.*\.go$
+      linters:
+        - misspell
+        - gosimple

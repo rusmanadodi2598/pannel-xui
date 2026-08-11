@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# pre-push — gate sebelum push: gitleaks pada commit yang akan di-push +
+# build & vet kedua modul Go (root x-ui + bot/). Test penuh dijalankan CI.
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+
+REMOTE="$1"
+
+# --- 1. gitleaks detect pada commit yang akan di-push -----------------------
+if command -v gitleaks >/dev/null 2>&1; then
+  LOCAL_HEAD="$(git rev-parse HEAD)"
+  # Push pertama ke branch baru: ref remote belum ada → scan dilewati; CI
+  # (.github/workflows/security.yml) tetap men-scan seluruh riwayat.
+  REMOTE_HEAD="$(git rev-parse --quiet --verify "$REMOTE" 2>/dev/null || echo)"
+  if [ -n "$REMOTE_HEAD" ] && [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
+    RANGE="${REMOTE_HEAD}..${LOCAL_HEAD}"
+    # Validasi range via git rev-list — gitleaks diam-diam menganggap range
+    # invalid sebagai "kosong" (exit 0); kita fail-closed duluan.
+    COUNT="$(git rev-list --count "$RANGE" 2>/dev/null)" || {
+      echo "❌ [pre-push] tidak dapat membaca commit range $RANGE."
+      exit 1
+    }
+    if [ "$COUNT" -eq 0 ]; then
+      echo "✅ [pre-push] tidak ada commit baru untuk discan."
+    else
+      echo "🔍 [pre-push] gitleaks scan $COUNT commit baru ($RANGE)..."
+      SCAN_OUT="$(gitleaks detect --source "$ROOT" --config "$ROOT/gitleaks.toml" \
+          --log-opts="$RANGE" -v --redact=100 2>&1)"
+      SCAN_EXIT=$?
+      if echo "$SCAN_OUT" | grep -qE 'leaks found: [1-9][0-9]*'; then
+        echo "$SCAN_OUT" | grep -E 'leaks found|RuleID|Secret' | tail -6
+        echo "❌ [pre-push] gitleaks mendeteksi secret pada commit yang akan di-push."
+        exit 1
+      fi
+      # Fail-closed: gitleaks error (bukan "no leaks") juga memblokir push.
+      if [ "$SCAN_EXIT" -ne 0 ] && ! echo "$SCAN_OUT" | grep -q 'no leaks found'; then
+        echo "$SCAN_OUT" | tail -6
+        echo "❌ [pre-push] gitleaks gagal menjalankan scan — push dibatalkan."
+        exit 1
+      fi
+      echo "✅ [pre-push] tidak ada leak pada commit baru."
+    fi
+  fi
+else
+  echo "⚠️ [pre-push] gitleaks tidak terinstall — jalankan scripts/install-githooks.sh"
+  exit 1
+fi
+
+# --- 2. Build & vet kedua modul ---------------------------------------------
+echo "🏗 [pre-push] go build/vet root module..."
+(cd "$ROOT" && go build ./... && go vet ./... 2>/dev/null) || {
+  echo "❌ [pre-push] root module gagal build/vet."
+  exit 1
+}
+
+echo "🏗 [pre-push] go build/vet bot module..."
+(cd "$ROOT/bot" && go build ./... && go vet ./...) || {
+  echo "❌ [pre-push] bot module gagal build/vet."
+  exit 1
+}
+
+# --- 3. golangci-lint penuh bot/ (opsional lokal — CI tetap enforce) ---------
+if command -v golangci-lint >/dev/null 2>&1; then
+  echo "🔍 [pre-push] golangci-lint bot/ (full)..."
+  LINT_OUT="$(cd "$ROOT/bot" && golangci-lint run ./... 2>&1)"
+  LINT_EXIT=$?
+  if [ "$LINT_EXIT" -ne 0 ]; then
+    echo "$LINT_OUT" | tail -8
+    echo "❌ [pre-push] golangci-lint menemukan isu di bot/."
+    exit 1
+  fi
+  echo "✅ [pre-push] lint bot/ bersih."
+else
+  echo "⚠️ [pre-push] golangci-lint tidak terinstall — lint dilewati (CI enforce)."
+fi
+
+echo "✅ [pre-push] semua gate lolos."
+exit 0

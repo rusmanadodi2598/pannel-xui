@@ -1,0 +1,95 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- gitleaks
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks detect
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Config otomatis dibaca dari gitleaks.toml di root repo.
+          # Untuk repositori PRIVATE, gitleaks-action v2 butuh lisensi:
+          #   GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ------------------------------------------------------------ Go gate root
+  go-root:
+    name: Root module (x-ui) build+vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+
+  # ---------------------------------------------------- golangci-lint (bot/)
+  golangci:
+    name: golangci-lint (bot module)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bot/go.mod
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          working-directory: bot
+          args: --timeout=5m
+
+  # --------------------------------------------------------------- Go gate bot
+  go-bot:
+    name: Bot module build+vet+test -race
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: bot_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://bot:bot@localhost:5432/bot_test?sslmode=disable
+      TEST_REDIS_URL: redis://localhost:6379/0
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bot/go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - name: Migrate + test -race
+        run: go test -race ./...

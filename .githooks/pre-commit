@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# pre-commit — gate keamanan & format untuk pannel-xui (root + bot/).
+#
+#  1. gitleaks protect --staged : tolak commit yang membawa secret
+#  2. gofmt                       : tolak Go yang tidak ter-format
+#  3. git diff --check            : tolak whitespace error
+#
+# Bypass (git commit --no-verify) TIDAK boleh dipakai untuk secret — gitleaks
+# tetap jalan di CI (.github/workflows/security.yml) dan pre-push.
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+
+# --- 1. Secret scan (gitleaks) ----------------------------------------------
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks protect --staged --config "$ROOT/gitleaks.toml" 2>/dev/null; then
+    echo "❌ [pre-commit] GITLEAKS mendeteksi potensi secret di perubahan ini."
+    echo "   Hapus secret, pindahkan ke .env (gitignored), lalu stage ulang."
+    echo "   Jalankan 'gitleaks protect --staged -v' untuk detail."
+    exit 1
+  fi
+else
+  echo "⚠️ [pre-commit] gitleaks tidak terinstall — jalankan scripts/install-githooks.sh"
+  echo "   atau: go install github.com/gitleaks/gitleaks/v8@latest"
+  exit 1
+fi
+
+# --- 2. gofmt (file .go yang di-stage) --------------------------------------
+STAGED_GO="$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)"
+if [ -n "$STAGED_GO" ]; then
+  UNFORMATTED="$(gofmt -l $STAGED_GO 2>/dev/null)"
+  if [ -n "$UNFORMATTED" ]; then
+    echo "❌ [pre-commit] file Go tidak ter-format (jalankan: gofmt -w):"
+    printf '   %s\n' $UNFORMATTED
+    exit 1
+  fi
+fi
+
+# --- 2b. golangci-lint (opsional, lebih ketat dari go vet) -------------------
+# Hanya untuk modul bot/ (kode kita). Modul root = upstream x-ui legacy, tidak
+# di-lint penuh. --new-from-patch membatasi ke baris yang benar-benar diubah,
+# jadi isu lama di file yang sama tidak memblokir commit baru.
+# Skip (warn) bila golangci-lint belum terinstall — CI tetap enforce penuh.
+BOT_STAGED_GO="$(echo "$STAGED_GO" | grep '^bot/.*\.go$' || true)"
+if [ -n "$BOT_STAGED_GO" ] && command -v golangci-lint >/dev/null 2>&1; then
+  TMP_PATCH="$(mktemp)"
+  git diff --cached --binary --relative=bot > "$TMP_PATCH"
+  if [ -s "$TMP_PATCH" ]; then
+    echo "🔍 [pre-commit] golangci-lint (baris baru di bot/)..."
+    LINT_OUT="$(cd "$ROOT/bot" && golangci-lint run --new-from-patch="$TMP_PATCH" ./... 2>&1)"
+    LINT_EXIT=$?
+    if [ "$LINT_EXIT" -ne 0 ]; then
+      echo "$LINT_OUT" | tail -8
+      if [ "$LINT_EXIT" -eq 1 ]; then
+        echo "❌ [pre-commit] golangci-lint menemukan isu di perubahan ini."
+        echo "   Perbaiki, atau jalankan: (cd bot && golangci-lint run ./...)"
+      else
+        echo "❌ [pre-commit] golangci-lint gagal menjalankan scan (exit $LINT_EXIT) — commit dibatalkan (fail-closed)."
+      fi
+      rm -f "$TMP_PATCH"
+      exit 1
+    fi
+    echo "✅ [pre-commit] lint bot/ bersih."
+  fi
+  rm -f "$TMP_PATCH"
+elif [ -n "$BOT_STAGED_GO" ]; then
+  echo "⚠️ [pre-commit] golangci-lint tidak terinstall — dilewati (CI tetap enforce)."
+  echo "   Install: scripts/install-githooks.sh"
+fi
+
+# --- 3. Whitespace error ----------------------------------------------------
+# Catatan: JANGAN pakai --quiet di sini — --quiet implies --exit-code, yang
+# tidak kompatibel dengan --check (git-diff docs): exit 1 menjadi "ada
+# perbedaan" (selalu true saat ada file staged) bukan "ada whitespace error".
+if ! git diff --cached --check; then
+  echo "❌ [pre-commit] whitespace error terdeteksi (trailing space / missing newline)."
+  exit 1
+fi
+
+exit 0

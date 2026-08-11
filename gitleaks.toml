@@ -1,0 +1,44 @@
+# gitleaks.toml — secret scanning policy (gitleaks v8)
+#
+# Dipakai oleh: .githooks/pre-commit (protect --staged), .githooks/pre-push,
+# dan CI (.github/workflows/security.yml). Semua allowlist WAJIB disertai
+# alasan tertulis di bawah — menambahkan entri tanpa justifikasi = bypass
+# keamanan.
+
+title = "pannel-xui gitleaks config"
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Allowlist — hanya false positive yang TERVERIFIKASI.
+# ---------------------------------------------------------------------------
+# 1. `antd.min.js.map` (ant-design-vue 1.7.2 & 1.7.8) — source map vendor
+#    minified; yang terdeteksi adalah NAMA KOMPONEN IKON ("EnvironmentFill",
+#    "EllipsisOutline"), bukan token. File vendor tidak pernah diedit manual.
+# 2. Commit 95bdb06 (web/html/xui/inbounds.html) — identifier kode JS
+#    "getNewX25519.obj.privateKey" (fungsi generate key x25519 panel), bukan
+#    secret. Di-allowlist PER-COMMIT (bukan per-path) agar edit masa depan pada
+#    file template ini tetap discan penuh.
+# 3. Nilai DUMMY di file test Go bot/ — testSecret 32-hex (AES-256-GCM fixture
+#    crypto_test.go & webhook_test.go), password mock panel "trojan-pass-123"
+#    (client_test.go & handler_test.go), dan password integrasi mock
+#    "s3cret-integration-pass" (crypto_test.go). Bukan kredensial asli;
+#    di-allowlist per-REGEX (bukan per-path) supaya secret asli di file test
+#    mana pun tetap terdeteksi.
+[allowlist]
+description = "False positive terverifikasi: nama ikon source map vendor + identifier kode panel + fixture dummy file test Go bot/"
+
+commits = [
+    "95bdb064bb1c760320eda47dea9eadb64cde790a", # inbounds.html: identifier JS getNewX25519.obj.privateKey
+]
+
+paths = [
+    '''web/assets/ant-design-vue@1\.7\.[0-9]+/antd\.min\.js\.map''', # ikon vendor minified
+]
+
+regexes = [
+    '''0123456789abcdef0123456789abcdef''', # testSecret 32-hex dummy AES-256-GCM (bot/*_test.go)
+    '''trojan-pass-123''',                   # password dummy mock panel XUI (bot/*_test.go)
+    '''s3cret-integration-pass''',           # password dummy integrasi mock (bot/*_test.go)
+]

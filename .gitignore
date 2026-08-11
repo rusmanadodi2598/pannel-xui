@@ -16,3 +16,24 @@ release/
 /x-ui
 .DS_Store
 /dev/
+
+# ==== Secrets & kredensial — tidak pernah di-commit (gitleaks enforce) ====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+certs/
+
+# ==== Editor backups / artifact tooling ====
+*.save
+*.swp
+*~
+coverage.out
+.nyc_output/
+
+# ==== Security tooling output (jangan di-commit, disimpan lokal saja) ====
+gitleaks-report*
+/gl.json

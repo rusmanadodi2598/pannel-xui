@@ -1,0 +1,171 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-05-15",
+  "currency": "IDR",
+  "categories": {
+    "ID": [
+      {
+        "id": 1,
+        "name": "VPN Indonesia 15 Hari",
+        "operator": "XUI",
+        "code": "ID15",
+        "price": 4000,
+        "fee": 0,
+        "benefits": [
+          "Server lokal Indonesia, latency rendah"
+        ],
+        "validity": "15 Hari",
+        "is_active": true
+      },
+      {
+        "id": 2,
+        "name": "VPN Indonesia 30 Hari",
+        "operator": "XUI",
+        "code": "ID30",
+        "price": 7000,
+        "fee": 0,
+        "benefits": [
+          "Server lokal Indonesia, latency rendah"
+        ],
+        "validity": "30 Hari",
+        "is_active": true
+      },
+      {
+        "id": 3,
+        "name": "VPN Indonesia 90 Hari",
+        "operator": "XUI",
+        "code": "ID90",
+        "price": 20000,
+        "fee": 0,
+        "benefits": [
+          "Server lokal Indonesia, latency rendah"
+        ],
+        "validity": "90 Hari",
+        "is_active": true
+      }
+    ],
+    "SG": [
+      {
+        "id": 4,
+        "name": "VPN Singapore 15 Hari",
+        "operator": "XUI",
+        "code": "SG15",
+        "price": 5000,
+        "fee": 0,
+        "benefits": [
+          "Server Singapore, stabil untuk download"
+        ],
+        "validity": "15 Hari",
+        "is_active": true
+      },
+      {
+        "id": 5,
+        "name": "VPN Singapore 30 Hari",
+        "operator": "XUI",
+        "code": "SG30",
+        "price": 8000,
+        "fee": 0,
+        "benefits": [
+          "Server Singapore, stabil untuk download"
+        ],
+        "validity": "30 Hari",
+        "is_active": true
+      },
+      {
+        "id": 6,
+        "name": "VPN Singapore 90 Hari",
+        "operator": "XUI",
+        "code": "SG90",
+        "price": 23000,
+        "fee": 0,
+        "benefits": [
+          "Server Singapore, stabil untuk download"
+        ],
+        "validity": "90 Hari",
+        "is_active": true
+      }
+    ],
+    "JP": [
+      {
+        "id": 7,
+        "name": "VPN Japan 15 Hari",
+        "operator": "XUI",
+        "code": "JP15",
+        "price": 4000,
+        "fee": 0,
+        "benefits": [
+          "Server Japan, akses cepat ke Asia Timur"
+        ],
+        "validity": "15 Hari",
+        "is_active": true
+      },
+      {
+        "id": 8,
+        "name": "VPN Japan 30 Hari",
+        "operator": "XUI",
+        "code": "JP30",
+        "price": 6000,
+        "fee": 0,
+        "benefits": [
+          "Server Japan, akses cepat ke Asia Timur"
+        ],
+        "validity": "30 Hari",
+        "is_active": true
+      },
+      {
+        "id": 9,
+        "name": "VPN Japan 90 Hari",
+        "operator": "XUI",
+        "code": "JP90",
+        "price": 15000,
+        "fee": 0,
+        "benefits": [
+          "Server Japan, akses cepat ke Asia Timur"
+        ],
+        "validity": "90 Hari",
+        "is_active": true
+      }
+    ],
+    "CN": [
+      {
+        "id": 10,
+        "name": "VPN China 15 Hari",
+        "operator": "XUI",
+        "code": "CN15",
+        "price": 4000,
+        "fee": 0,
+        "benefits": [
+          "Server China, akses konten China"
+        ],
+        "validity": "15 Hari",
+        "is_active": true
+      },
+      {
+        "id": 11,
+        "name": "VPN China 30 Hari",
+        "operator": "XUI",
+        "code": "CN30",
+        "price": 6000,
+        "fee": 0,
+        "benefits": [
+          "Server China, akses konten China"
+        ],
+        "validity": "30 Hari",
+        "is_active": true
+      },
+      {
+        "id": 12,
+        "name": "VPN China 90 Hari",
+        "operator": "XUI",
+        "code": "CN90",
+        "price": 15000,
+        "fee": 0,
+        "benefits": [
+          "Server China, akses konten China"
+        ],
+        "validity": "90 Hari",
+        "is_active": true
+      }
+    ]
+  }
+}
