@@ -30,6 +30,8 @@ type Shop struct {
 	Users   UserReader
 	Orders  OrderRunner
 	Clients ClientReader
+	Trials  TrialRunner  // FR-07: create trial accounts
+	TrialLm TrialLimiter // FR-07: daily limit + enabled flag
 }
 
 // PlanReader reads enabled plans (pricingsvc.Service).
@@ -58,6 +60,22 @@ type OrderRunner interface {
 // ClientReader lists a user's clients (postgres.ClientRepo).
 type ClientReader interface {
 	ListByUser(ctx context.Context, userID int64, limit int) ([]postgres.ClientView, error)
+}
+
+// TrialRunner creates free trial accounts (ordersvc.Service implements it).
+type TrialRunner interface {
+	CreateTrial(ctx context.Context, user *postgres.User, serverID int64, spec ordersvc.TrialSpec) (*ordersvc.PurchaseResult, error)
+}
+
+// TrialLimiter enforces the daily trial policy (trialsvc.Service implements it).
+type TrialLimiter interface {
+	Enabled() bool
+	Limit() int
+	Hours() int
+	TrafficGB() int
+	IPLimit() int
+	Remaining(ctx context.Context, userID int64) (int, error)
+	Claim(ctx context.Context, userID int64) (int, error)
 }
 
 // routeShop dispatches buy/renew/account callbacks to their handlers.

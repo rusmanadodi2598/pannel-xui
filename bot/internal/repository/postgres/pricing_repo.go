@@ -32,6 +32,8 @@ func NewPricingRepo(db *gorm.DB) *PricingRepo { return &PricingRepo{db: db} }
 // UpsertMany upserts seed rows on UNIQUE (country_code, plan_days) (idempotent).
 // Per-row select is an N+1 but deliberately bounded: the seed file ships ≤ 12
 // plans (AGENTS.md §1.7 small-N tradeoff documented); boot-time only.
+// On an existing row only the PRICE is synced — `enabled` is the admin's
+// operational switch (FR-11 toggle) and must survive reloads (fix review v1.20).
 func (r *PricingRepo) UpsertMany(ctx context.Context, rows []Pricing) error {
 	if len(rows) == 0 {
 		return nil
@@ -43,16 +45,18 @@ func (r *PricingRepo) UpsertMany(ctx context.Context, rows []Pricing) error {
 			First(&existing).Error
 		switch {
 		case err == nil:
-			if existing.Price != row.Price || existing.Enabled != row.Enabled {
+			if existing.Price != row.Price {
 				if uerr := r.db.WithContext(ctx).Model(&existing).
-					Updates(map[string]any{"price": row.Price, "enabled": row.Enabled, "updated_at": time.Now()}).
+					Updates(map[string]any{"price": row.Price, "updated_at": time.Now()}).
 					Error; uerr != nil {
 					return fmt.Errorf("updating pricing %s%d: %w", row.CountryCode, row.PlanDays, uerr)
 				}
 			}
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			row.ID = 0
-			if cerr := r.db.WithContext(ctx).Create(&row).Error; cerr != nil {
+			// Select forces `enabled` even when false — GORM omits zero fields
+			// that carry a `default` tag on plain Create (repo contract honesty).
+			if cerr := r.db.WithContext(ctx).Select("country_code", "plan_days", "price", "enabled", "updated_at").Create(&row).Error; cerr != nil {
 				return fmt.Errorf("inserting pricing %s%d: %w", row.CountryCode, row.PlanDays, cerr)
 			}
 		default:
@@ -73,10 +77,21 @@ func (r *PricingRepo) ListEnabled(ctx context.Context) ([]Pricing, error) {
 
 // GetPlan returns one enabled plan; ErrPlanNotFound when absent/disabled.
 func (r *PricingRepo) GetPlan(ctx context.Context, country string, days int) (*Pricing, error) {
+	return r.get(ctx, country, days, true)
+}
+
+// Get returns one plan regardless of its enabled state (admin menu, FR-11).
+func (r *PricingRepo) Get(ctx context.Context, country string, days int) (*Pricing, error) {
+	return r.get(ctx, country, days, false)
+}
+
+func (r *PricingRepo) get(ctx context.Context, country string, days int, onlyEnabled bool) (*Pricing, error) {
 	var row Pricing
-	err := r.db.WithContext(ctx).
-		Where("country_code = ? AND plan_days = ? AND enabled = true", country, days).
-		First(&row).Error
+	q := r.db.WithContext(ctx).Where("country_code = ? AND plan_days = ?", country, days)
+	if onlyEnabled {
+		q = q.Where("enabled = true")
+	}
+	err := q.First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrPlanNotFound
 	}
@@ -84,6 +99,43 @@ func (r *PricingRepo) GetPlan(ctx context.Context, country string, days int) (*P
 		return nil, fmt.Errorf("getting plan %s%d: %w", country, days, err)
 	}
 	return &row, nil
+}
+
+// ListAll returns every plan (enabled and disabled) for the admin menu (FR-11).
+func (r *PricingRepo) ListAll(ctx context.Context) ([]Pricing, error) {
+	var rows []Pricing
+	if err := r.db.WithContext(ctx).Order("country_code, plan_days").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("listing all pricing: %w", err)
+	}
+	return rows, nil
+}
+
+// SetPrice updates the plan price; ErrPlanNotFound when the plan does not exist.
+func (r *PricingRepo) SetPrice(ctx context.Context, country string, days int, price domain.Money) error {
+	res := r.db.WithContext(ctx).Model(&Pricing{}).
+		Where("country_code = ? AND plan_days = ?", country, days).
+		Updates(map[string]any{"price": price, "updated_at": time.Now()})
+	if res.Error != nil {
+		return fmt.Errorf("setting price %s%d: %w", country, days, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrPlanNotFound
+	}
+	return nil
+}
+
+// SetEnabled toggles a plan's sellable state (admin menu, FR-11).
+func (r *PricingRepo) SetEnabled(ctx context.Context, country string, days int, enabled bool) error {
+	res := r.db.WithContext(ctx).Model(&Pricing{}).
+		Where("country_code = ? AND plan_days = ?", country, days).
+		Updates(map[string]any{"enabled": enabled, "updated_at": time.Now()})
+	if res.Error != nil {
+		return fmt.Errorf("setting plan enabled %s%d: %w", country, days, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrPlanNotFound
+	}
+	return nil
 }
 
 // ToPlan maps a pricing row to the domain VpnPlan value object.

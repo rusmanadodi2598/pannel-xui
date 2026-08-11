@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/kentangtech/bot-order/internal/domain"
 	"gorm.io/gorm"
@@ -64,6 +65,46 @@ func (r *UserRepo) GetByTelegramID(ctx context.Context, tgID int64) (*User, erro
 		return nil, err
 	}
 	return &u, nil
+}
+
+// SetBanned flips the persistent ban flag (FR-11). It is the source of truth
+// for the debit guard; the gate-level marker lives in Redis (service/telegram).
+func (r *UserRepo) SetBanned(ctx context.Context, tgID int64, banned bool) error {
+	res := r.db.WithContext(ctx).Model(&User{}).
+		Where("telegram_id = ?", tgID).
+		Updates(map[string]any{"is_banned": banned, "updated_at": time.Now()})
+	if res.Error != nil {
+		return fmt.Errorf("setting user %d banned=%v: %w", tgID, banned, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// ListTelegramIDs pages the registered user IDs for the admin broadcast (FR-11).
+// Ordered by id so paging is stable across chunks (AGENTS.md §1.7: bounded).
+func (r *UserRepo) ListTelegramIDs(ctx context.Context, limit, offset int) ([]int64, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var ids []int64
+	err := r.db.WithContext(ctx).Model(&User{}).
+		Order("id ASC").Limit(limit).Offset(offset).
+		Pluck("telegram_id", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("listing user ids: %w", err)
+	}
+	return ids, nil
+}
+
+// CountUsers returns the number of registered users (broadcast sizing, FR-11).
+func (r *UserRepo) CountUsers(ctx context.Context) (int64, error) {
+	var n int64
+	if err := r.db.WithContext(ctx).Model(&User{}).Count(&n).Error; err != nil {
+		return 0, fmt.Errorf("counting users: %w", err)
+	}
+	return n, nil
 }
 
 // Debit atomically deducts amount and appends a ledger row in one self-contained

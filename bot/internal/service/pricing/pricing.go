@@ -23,6 +23,11 @@ type Store interface {
 	UpsertMany(ctx context.Context, rows []postgres.Pricing) error
 	ListEnabled(ctx context.Context) ([]postgres.Pricing, error)
 	GetPlan(ctx context.Context, country string, days int) (*postgres.Pricing, error)
+	// FR-11 admin operations.
+	ListAll(ctx context.Context) ([]postgres.Pricing, error)
+	Get(ctx context.Context, country string, days int) (*postgres.Pricing, error)
+	SetPrice(ctx context.Context, country string, days int, price domain.Money) error
+	SetEnabled(ctx context.Context, country string, days int, enabled bool) error
 }
 
 // Service orchestrates seeding and live price reads.
@@ -69,4 +74,42 @@ func (s *Service) GetPlan(ctx context.Context, country string, days int) (*domai
 		return nil, err
 	}
 	return row.ToPlan(), nil
+}
+
+// ListAll returns every plan (enabled and disabled) for the admin menu (FR-11).
+func (s *Service) ListAll(ctx context.Context) ([]domain.VpnPlan, error) {
+	rows, err := s.store.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	plans := make([]domain.VpnPlan, 0, len(rows))
+	for i := range rows {
+		plans = append(plans, *rows[i].ToPlan())
+	}
+	return plans, nil
+}
+
+// Get returns one plan regardless of enabled state (admin detail, FR-11).
+func (s *Service) Get(ctx context.Context, country string, days int) (*domain.VpnPlan, error) {
+	row, err := s.store.Get(ctx, country, days)
+	if err != nil {
+		return nil, err
+	}
+	return row.ToPlan(), nil
+}
+
+// SetPrice updates a plan's price (admin, FR-11). Orders always read live prices.
+func (s *Service) SetPrice(ctx context.Context, country string, days int, price domain.Money) error {
+	return s.store.SetPrice(ctx, country, days, price)
+}
+
+// SetEnabled toggles a plan's sellable state (admin, FR-11).
+func (s *Service) SetEnabled(ctx context.Context, country string, days int, enabled bool) error {
+	return s.store.SetEnabled(ctx, country, days, enabled)
+}
+
+// Reload re-applies the seed file idempotently (admin reload pricing, FR-11).
+// A nil seeder is a no-op (unit tests); boot seeds are unaffected.
+func (s *Service) Reload(ctx context.Context) error {
+	return s.EnsureSeeded(ctx)
 }

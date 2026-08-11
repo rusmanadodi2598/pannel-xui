@@ -85,6 +85,17 @@ func TestLoad_InvalidValues(t *testing.T) {
 		{"invalid webhook workers", func(e map[string]string) { e["WEBHOOK_WORKERS"] = "0" }},
 		{"invalid webhook queue buffer", func(e map[string]string) { e["WEBHOOK_QUEUE_BUFFER"] = "-1" }},
 		{"invalid drop pending", func(e map[string]string) { e["WEBHOOK_DROP_PENDING"] = "abc" }},
+		{"invalid trial enabled", func(e map[string]string) { e["TRIAL_ENABLED"] = "abc" }},
+		{"invalid trial daily limit", func(e map[string]string) { e["TRIAL_DAILY_LIMIT"] = "0" }},
+		{"invalid trial duration", func(e map[string]string) { e["TRIAL_DURATION_HOURS"] = "-1" }}, {"invalid trial traffic", func(e map[string]string) { e["TRIAL_TRAFFIC_GB"] = "0" }},
+		{"invalid trial ip limit", func(e map[string]string) { e["TRIAL_IP_LIMIT"] = "0" }},
+		{"invalid expiry enabled", func(e map[string]string) { e["EXPIRY_NOTIFY_ENABLED"] = "abc" }},
+		{"invalid expiry interval", func(e map[string]string) { e["EXPIRY_NOTIFY_INTERVAL_MIN"] = "0" }},
+		{"invalid expiry batch", func(e map[string]string) { e["EXPIRY_NOTIFY_BATCH"] = "0" }},
+		{"invalid traffic sync enabled", func(e map[string]string) { e["TRAFFIC_SYNC_ENABLED"] = "abc" }},
+		{"invalid traffic sync interval", func(e map[string]string) { e["TRAFFIC_SYNC_INTERVAL_MIN"] = "0" }},
+		{"invalid traffic sync interval high", func(e map[string]string) { e["TRAFFIC_SYNC_INTERVAL_MIN"] = "61" }},
+		{"invalid traffic sync batch", func(e map[string]string) { e["TRAFFIC_SYNC_BATCH"] = "0" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,36 +163,57 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Errorf("webhook tuning = %d/%v/%d/%d, want 40/true/8/64",
 			cfg.WebhookMaxConnections, cfg.WebhookDropPending, cfg.WebhookWorkers, cfg.WebhookQueueBuffer)
 	}
+	if !cfg.TrialEnabled || cfg.TrialDailyLimit != 2 || cfg.TrialDurationHours != 1 ||
+		cfg.TrialTrafficGB != 1 || cfg.TrialIPLimit != 1 {
+		t.Errorf("trial policy = %v/%d/%d/%d/%d, want true/2/1/1/1",
+			cfg.TrialEnabled, cfg.TrialDailyLimit, cfg.TrialDurationHours, cfg.TrialTrafficGB, cfg.TrialIPLimit)
+	}
+	if !cfg.ExpiryNotifyEnabled || cfg.ExpiryNotifyInterval != 6*time.Hour || cfg.ExpiryNotifyBatch != 50 {
+		t.Errorf("expiry notify = %v/%v/%d, want true/6h/50",
+			cfg.ExpiryNotifyEnabled, cfg.ExpiryNotifyInterval, cfg.ExpiryNotifyBatch)
+	}
+	if !cfg.TrafficSyncEnabled || cfg.TrafficSyncInterval != 5*time.Minute || cfg.TrafficSyncBatch != 200 {
+		t.Errorf("traffic sync = %v/%v/%d, want true/5m/200",
+			cfg.TrafficSyncEnabled, cfg.TrafficSyncInterval, cfg.TrafficSyncBatch)
+	}
 }
 
 // validEnv returns a complete, valid environment for tests.
 func validEnv() map[string]string {
 	return map[string]string{
-		"BOT_TOKEN":             "123456:TEST",
-		"BOT_DOMAIN":            "bot.example.com",
-		"WEBHOOK_PORT":          "8443",
-		"WEBHOOK_PATH":          "/api/v1/webhooks/telegram",
-		"WEBHOOK_SECRET":        "0123456789abcdef0123456789abcdef",
-		"DATABASE_URL":          "postgres://bot:bot@localhost:5432/bot",
-		"REDIS_URL":             "redis://localhost:6379/3",
-		"ENCRYPTION_KEY":        validKey(),
-		"ADMIN_IDS":             "123456789,987654321",
-		"REQUIRED_GROUP_ID":     "-100123456789",
-		"REQUIRED_GROUP_LINK":   "https://t.me/kentangtech",
-		"NOTIFICATION_GROUP_ID": "-100987654321",
-		"EXPIRY_NOTIFY_DAYS":    "7,3,1",
-		"RATE_LIMIT_REQUESTS":   "30",
-		"TIME_LOCATION":         "Asia/Jakarta",
-		"XUI_API_TIMEOUT":       "30",
-		"API_BASE_URL":          "https://hostinger.kentangtechstore.com",
-		"TOPUP_API_KEY":         "secret-api-key",
-		"TOPUP_WEBHOOK_SECRET":  "secret-webhook-key",
-		"MIN_TOPUP_AMOUNT":      "5000",
-		"MAX_TOPUP_AMOUNT":      "5000000",
-		"QRIS_FEE_PERCENT":      "0.025",
-		"QRIS_PPN_PERCENT":      "0.11",
-		"QRIS_EXPIRY_MINUTES":   "15",
-		"LOG_LEVEL":             "info",
+		"BOT_TOKEN":                  "123456:TEST",
+		"BOT_DOMAIN":                 "bot.example.com",
+		"WEBHOOK_PORT":               "8443",
+		"WEBHOOK_PATH":               "/api/v1/webhooks/telegram",
+		"WEBHOOK_SECRET":             "0123456789abcdef0123456789abcdef",
+		"DATABASE_URL":               "postgres://bot:bot@localhost:5432/bot",
+		"REDIS_URL":                  "redis://localhost:6379/3",
+		"ENCRYPTION_KEY":             validKey(),
+		"ADMIN_IDS":                  "123456789,987654321",
+		"REQUIRED_GROUP_ID":          "-100123456789",
+		"REQUIRED_GROUP_LINK":        "https://t.me/kentangtech",
+		"NOTIFICATION_GROUP_ID":      "-100987654321",
+		"EXPIRY_NOTIFY_DAYS":         "7,3,1",
+		"RATE_LIMIT_REQUESTS":        "30",
+		"TIME_LOCATION":              "Asia/Jakarta",
+		"XUI_API_TIMEOUT":            "30",
+		"API_BASE_URL":               "https://hostinger.kentangtechstore.com",
+		"TOPUP_API_KEY":              "secret-api-key",
+		"TOPUP_WEBHOOK_SECRET":       "secret-webhook-key",
+		"MIN_TOPUP_AMOUNT":           "5000",
+		"MAX_TOPUP_AMOUNT":           "5000000",
+		"QRIS_FEE_PERCENT":           "0.025",
+		"QRIS_PPN_PERCENT":           "0.11",
+		"QRIS_EXPIRY_MINUTES":        "15",
+		"LOG_LEVEL":                  "info",
+		"TRIAL_ENABLED":              "true",
+		"TRIAL_DAILY_LIMIT":          "2",
+		"TRIAL_DURATION_HOURS":       "1",
+		"TRIAL_TRAFFIC_GB":           "1",
+		"TRIAL_IP_LIMIT":             "1",
+		"EXPIRY_NOTIFY_ENABLED":      "true",
+		"EXPIRY_NOTIFY_INTERVAL_MIN": "360",
+		"EXPIRY_NOTIFY_BATCH":        "50",
 	}
 }
 

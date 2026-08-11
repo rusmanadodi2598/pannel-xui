@@ -63,7 +63,7 @@ type VPNClient struct {
 	ExpiresAt       *time.Time `gorm:"type:timestamptz"`
 	ConfigLink      string     `gorm:"type:text"`
 	SubscriptionURL string     `gorm:"type:text"`
-	NotifiedExpiry  bool       `gorm:"not null;default:false"`
+	NotifiedExpiry  int        `gorm:"not null;default:0"` // FR-09: ambang hari terakhir dikirim (0/7/3/1)
 	LastSync        *time.Time `gorm:"type:timestamptz"`
 	LastOnline      *time.Time `gorm:"type:timestamptz"`
 	CreatedAt       time.Time  `gorm:"type:timestamptz;not null;default:now()"`

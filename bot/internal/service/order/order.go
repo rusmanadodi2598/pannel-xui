@@ -60,6 +60,7 @@ type ServerPicker interface {
 // PanelGateway provisions clients on X-UI panels (serversvc.Service implements it).
 type PanelGateway interface {
 	CreateClient(ctx context.Context, serverID int64, email, protocol string, days int, trafficGB, ipLimit int64) (domain.PanelClient, error)
+	CreateTrialClient(ctx context.Context, serverID int64, email, protocol string, hours int, trafficGB, ipLimit int64) (domain.PanelClient, error)
 	RenewClient(ctx context.Context, serverID int64, clientID, email, protocol string, newExpiry time.Time) error
 }
 

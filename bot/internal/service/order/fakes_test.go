@@ -130,6 +130,7 @@ func (f *fakeServerPicker) PickForCountry(_ context.Context, _ string) (int64, e
 
 type fakePanelGateway struct {
 	called      bool
+	trialCalled bool
 	created     domain.PanelClient
 	createErr   error
 	renewCalled bool
@@ -138,6 +139,13 @@ type fakePanelGateway struct {
 
 func (f *fakePanelGateway) CreateClient(_ context.Context, _ int64, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
 	f.called = true
+	if f.createErr != nil {
+		return domain.PanelClient{}, f.createErr
+	}
+	return f.created, nil
+}
+func (f *fakePanelGateway) CreateTrialClient(_ context.Context, _ int64, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
+	f.trialCalled = true
 	if f.createErr != nil {
 		return domain.PanelClient{}, f.createErr
 	}

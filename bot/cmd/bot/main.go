@@ -18,24 +18,21 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/kentangtech/bot-order/internal/config"
-	"github.com/kentangtech/bot-order/internal/crypto"
 	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/handler/http"
 	telegramhandler "github.com/kentangtech/bot-order/internal/handler/telegram"
+	"github.com/kentangtech/bot-order/internal/job"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 	"github.com/kentangtech/bot-order/internal/repository/redis"
 	telegramrepo "github.com/kentangtech/bot-order/internal/repository/telegram"
-	"github.com/kentangtech/bot-order/internal/repository/xui"
-	ordersvc "github.com/kentangtech/bot-order/internal/service/order"
-	pricingsvc "github.com/kentangtech/bot-order/internal/service/pricing"
-	serversvc "github.com/kentangtech/bot-order/internal/service/server"
+	expirysvc "github.com/kentangtech/bot-order/internal/service/expiry"
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
 	topupsvc "github.com/kentangtech/bot-order/internal/service/topup"
-	usersvc "github.com/kentangtech/bot-order/internal/service/user"
 )
 
 // version is injected at build time via -ldflags "-X main.version=...".
@@ -132,10 +129,48 @@ func run() error {
 	banned := telegramservice.NewBanService(rdb)
 	limiter := telegramservice.NewRateLimiter(rdb, cfg.RateLimitRequests, telegramservice.RateLimitWindow)
 
-	// M4: auto-order services (FR-03/FR-04/FR-05/FR-08).
-	shop, err := buildShop(ctx, cfg, db, rdb, logger)
+	// M4 auto-order + M6 admin services (FR-03/04/05/08, FR-07, FR-11).
+	bundle, err := buildShop(ctx, cfg, db, rdb, banned, tgClient, logger)
 	if err != nil {
 		return err
+	}
+	shop := bundle.Shop
+
+	// M6 (FR-09): notifikasi kadaluarsa H-7/H-3/H-1 — worker interval; tanggal
+	// di pesan diformat sesuai TIME_LOCATION (FR-09 AC). Loop berhenti via ctx.
+	if cfg.ExpiryNotifyEnabled {
+		clientRepo := postgres.NewClientRepo(db.DB())
+		expirySvc := expirysvc.New(clientRepo, tgClient, cfg.ExpiryNotifyDays,
+			cfg.ExpiryNotifyBatch, cfg.TimeLocation, logger)
+		// Timeout per sweep 2 mnt (Telegram calls) — expirysvc menyelesaikan
+		// semua ambang dalam satu sweep, bounded (AGENTS.md §1.6).
+		notifier := job.NewIntervalWorker(cfg.ExpiryNotifyInterval, 2*time.Minute, expirySvc, logger)
+		var notifyWG sync.WaitGroup
+		notifyWG.Add(1)
+		go func() {
+			defer notifyWG.Done()
+			notifier.Run(ctx)
+		}()
+		// Drain sebelum run() kembali: batalkan ctx DULU (stop idempoten) — defer
+		// LIFO berarti wait terdaftar setelah stop harus memanggil stop sendiri,
+		// kalau tidak jalur error errCh menggantung di Wait() (fix review v1.19).
+		defer func() {
+			stop()
+			notifyWG.Wait()
+		}()
+		logger.Info("expiry notifier started",
+			"interval_minutes", cfg.ExpiryNotifyInterval.Minutes(),
+			"days", cfg.ExpiryNotifyDays, "batch", cfg.ExpiryNotifyBatch)
+	}
+
+	// M6 (PRD §16.2): sinkron traffic XUI → vpn_clients — worker interval;
+	// per-server timeout + satu panel gagal tidak menggagalkan sweep.
+	if cfg.TrafficSyncEnabled {
+		trafficWG := startTrafficSync(ctx, cfg, db, bundle, logger)
+		defer func() {
+			stop()
+			trafficWG.Wait()
+		}()
 	}
 
 	// M5: topup flow (FR-06) — menus live, payment API deferred behind a stub
@@ -151,7 +186,7 @@ func run() error {
 	topup := &telegramhandler.Topup{Users: shop.Users, Topups: topups, FSM: topupFSM}
 
 	// Dispatcher consumed by the bounded worker pool (per-user serialization).
-	dispatcher := telegramhandler.NewDispatcher(tgClient, gate, banned, limiter, logger, cfg.RequiredGroupLink, cfg.AdminIDs, shop, topup)
+	dispatcher := telegramhandler.NewDispatcher(tgClient, gate, banned, limiter, logger, cfg.RequiredGroupLink, cfg.AdminIDs, shop, topup, bundle.Admin)
 	worker := httphandler.NewWorker(cfg.WebhookWorkers, cfg.WebhookQueueBuffer, dispatcher, rdb, logger)
 	defer worker.Close()
 
@@ -196,45 +231,6 @@ func run() error {
 		logger.Info("bot-order stopped cleanly")
 		return nil
 	}
-}
-
-// buildShop seeds pricing & panels and wires the M4 shop services.
-func buildShop(ctx context.Context, cfg *config.Config, db *postgres.Repository, rdb *redis.Client, logger *slog.Logger) (*telegramhandler.Shop, error) {
-	box, err := crypto.NewSecretBox(cfg.EncryptionKey)
-	if err != nil {
-		return nil, fmt.Errorf("building secret box: %w", err)
-	}
-
-	gormDB := db.DB()
-	userRepo := postgres.NewUserRepo(gormDB)
-	pricingRepo := postgres.NewPricingRepo(gormDB)
-	serverRepo := postgres.NewServerRepo(gormDB)
-	clientRepo := postgres.NewClientRepo(gormDB)
-	orderRepo := postgres.NewOrderRepo(gormDB)
-
-	pricing := pricingsvc.New(pricingRepo, pricingsvc.FileSeeder{Path: cfg.PricingSeedFile})
-	if err := pricing.EnsureSeeded(ctx); err != nil {
-		return nil, err
-	}
-	logger.Info("pricing seeded", "file", cfg.PricingSeedFile)
-
-	sessionCache := xui.NewRedisSessionCache(rdb.Raw())
-	servers := serversvc.New(serverRepo, box, sessionCache)
-	if err := servers.EnsureSeeded(ctx, cfg.Panels); err != nil {
-		return nil, err
-	}
-	logger.Info("panels seeded", "count", len(cfg.Panels))
-
-	users := usersvc.New(userRepo)
-	orders := ordersvc.New(orderRepo, clientRepo, userRepo, pricing, servers, servers)
-
-	return &telegramhandler.Shop{
-		Plans:   pricing,
-		Servers: servers,
-		Users:   users,
-		Orders:  orders,
-		Clients: clientRepo,
-	}, nil
 }
 
 // newLogger builds a JSON slog handler at the configured level.

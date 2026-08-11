@@ -21,6 +21,7 @@ import (
 	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 	ordersvc "github.com/kentangtech/bot-order/internal/service/order"
+	trialsvc "github.com/kentangtech/bot-order/internal/service/trial"
 )
 
 type fakeShopDeps struct {
@@ -29,6 +30,8 @@ type fakeShopDeps struct {
 	users   *fakeUsers
 	orders  *fakeOrders
 	clients *fakeClients
+	trials  *fakeTrialRunner
+	tlim    *fakeTrialLimiter
 }
 
 func newFakeShop() *fakeShopDeps {
@@ -38,14 +41,66 @@ func newFakeShop() *fakeShopDeps {
 		users:   &fakeUsers{user: &postgres.User{ID: 9, TelegramID: 7, Balance: 50000}},
 		orders:  &fakeOrders{},
 		clients: &fakeClients{},
+		trials:  &fakeTrialRunner{},
+		tlim:    &fakeTrialLimiter{enabled: true, remaining: 2, limit: 2},
 	}
 }
 
 func dispatcherWithShop(api API, f *fakeShopDeps) *Dispatcher {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	shop := &Shop{Plans: f.plans, Servers: f.servers, Users: f.users, Orders: f.orders, Clients: f.clients}
-	return NewDispatcher(api, &fakeGate{}, &fakeBan{}, &fakeLimiter{allow: true}, logger, groupLink, nil, shop, nil)
+	shop := &Shop{
+		Plans: f.plans, Servers: f.servers, Users: f.users, Orders: f.orders,
+		Clients: f.clients, Trials: f.trials, TrialLm: f.tlim,
+	}
+	return NewDispatcher(api, &fakeGate{}, &fakeBan{}, &fakeLimiter{allow: true}, logger, groupLink, nil, shop, nil, nil)
 }
+
+type fakeTrialRunner struct {
+	called *int64
+	result *ordersvc.PurchaseResult
+	err    error
+}
+
+func (f *fakeTrialRunner) CreateTrial(_ context.Context, _ *postgres.User, serverID int64, _ ordersvc.TrialSpec) (*ordersvc.PurchaseResult, error) {
+	if f.called != nil {
+		*f.called = serverID
+	}
+	return f.result, f.err
+}
+
+type fakeTrialLimiter struct {
+	enabled   bool
+	remaining int
+	limit     int
+	claimed   int
+	err       error
+}
+
+func (f *fakeTrialLimiter) Enabled() bool  { return f.enabled }
+func (f *fakeTrialLimiter) Limit() int     { return f.limit }
+func (f *fakeTrialLimiter) Hours() int     { return 1 }
+func (f *fakeTrialLimiter) TrafficGB() int { return 1 }
+func (f *fakeTrialLimiter) IPLimit() int   { return 1 }
+func (f *fakeTrialLimiter) Remaining(context.Context, int64) (int, error) {
+	return f.remaining, f.err
+}
+func (f *fakeTrialLimiter) Claim(context.Context, int64) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	if f.remaining <= 0 {
+		return 0, trialsvc.ErrDailyLimitReached
+	}
+	f.remaining--
+	f.claimed++
+	return f.claimed, nil
+}
+
+// compile-time interface checks
+var (
+	_ TrialRunner  = (*fakeTrialRunner)(nil)
+	_ TrialLimiter = (*fakeTrialLimiter)(nil)
+)
 
 type fakePlans struct {
 	list []domain.VpnPlan

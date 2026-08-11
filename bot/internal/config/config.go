@@ -32,6 +32,18 @@ const (
 	DefaultTimeLocation          = "Asia/Jakarta"
 	DefaultLogLevel              = "info"
 
+	// Trial policy (FR-07): 2 akun/hari, durasi 1 jam, kuota 1 GB, 1 IP.
+	DefaultTrialEnabled       = true
+	DefaultTrialDailyLimit    = 2
+	DefaultTrialDurationHours = 1
+	DefaultTrialTrafficGB     = 1
+	DefaultTrialIPLimit       = 1
+
+	// Expiry reminders (FR-09): enabled, sweep interval, per-window batch.
+	DefaultExpiryNotifyEnabled     = true
+	DefaultExpiryNotifyIntervalMin = 360 // 6 jam: reminder lebih responsif daripada harian 09:00
+	DefaultExpiryNotifyBatch       = 50
+
 	// Connection pools (AGENTS.md §1.7: limits must be explicit).
 	DefaultDBMaxOpenConns    = 25
 	DefaultDBMaxIdleConns    = 10
@@ -78,6 +90,20 @@ type Config struct {
 	LogLevel              slog.Level
 	Panels                []ServerSeed // multi X-UI instances (FR-10, M4)
 	PricingSeedFile       string       // JSON file seeded into `pricing` at boot (PRD §13.7)
+	TrialEnabled          bool         // FR-07: fitur trial aktif/nonaktif
+	TrialDailyLimit       int          // FR-07 AC-1: maks akun trial per hari per user
+	TrialDurationHours    int          // FR-07: durasi trial dalam jam
+	TrialTrafficGB        int          // FR-07: kuota trial dalam GB
+	TrialIPLimit          int          // FR-07: limit IP akun trial
+
+	// Expiry reminders (FR-09).
+	ExpiryNotifyEnabled  bool          // worker notifikasi kadaluarsa aktif
+	ExpiryNotifyInterval time.Duration // jarak antar sweep (EXPIRY_NOTIFY_INTERVAL_MIN)
+	ExpiryNotifyBatch    int           // maks akun diproses per ambang per sweep
+
+	TrafficSyncEnabled  bool          // PRD §16.2
+	TrafficSyncInterval time.Duration // jarak antar sweep (TRAFFIC_SYNC_INTERVAL_MIN)
+	TrafficSyncBatch    int           // maks client diproses per sweep
 }
 
 // Load reads the environment, applies defaults and validates every field.
@@ -184,6 +210,35 @@ func Load() (*Config, error) {
 	}
 	cfg.PricingSeedFile = getEnv("PRICING_SEED_FILE", DefaultPricingSeedFile)
 	if cfg.Panels, err = ParseServerSeeds(); err != nil {
+		return nil, err
+	}
+	if cfg.TrialEnabled, err = parseBoolEnv("TRIAL_ENABLED", DefaultTrialEnabled); err != nil {
+		return nil, err
+	}
+	if cfg.TrialDailyLimit, err = parseIntEnv("TRIAL_DAILY_LIMIT", DefaultTrialDailyLimit); err != nil {
+		return nil, err
+	}
+	if cfg.TrialDurationHours, err = parseIntEnv("TRIAL_DURATION_HOURS", DefaultTrialDurationHours); err != nil {
+		return nil, err
+	}
+	if cfg.TrialTrafficGB, err = parseIntEnv("TRIAL_TRAFFIC_GB", DefaultTrialTrafficGB); err != nil {
+		return nil, err
+	}
+	if cfg.TrialIPLimit, err = parseIntEnv("TRIAL_IP_LIMIT", DefaultTrialIPLimit); err != nil {
+		return nil, err
+	}
+	if cfg.ExpiryNotifyEnabled, err = parseBoolEnv("EXPIRY_NOTIFY_ENABLED", DefaultExpiryNotifyEnabled); err != nil {
+		return nil, err
+	}
+	notifyIntervalMin, err := parseIntEnv("EXPIRY_NOTIFY_INTERVAL_MIN", DefaultExpiryNotifyIntervalMin)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ExpiryNotifyInterval = time.Duration(notifyIntervalMin) * time.Minute
+	if cfg.ExpiryNotifyBatch, err = parseIntEnv("EXPIRY_NOTIFY_BATCH", DefaultExpiryNotifyBatch); err != nil {
+		return nil, err
+	}
+	if err := cfg.applyTrafficSync(); err != nil {
 		return nil, err
 	}
 

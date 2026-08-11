@@ -13,6 +13,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // validate enforces the cross-field invariants of the configuration.
@@ -84,6 +85,27 @@ func (c *Config) validate() error {
 		if d <= 0 {
 			return fmt.Errorf("EXPIRY_NOTIFY_DAYS contains non-positive day: %d", d)
 		}
+	}
+	if c.TrialDailyLimit <= 0 {
+		return fmt.Errorf("TRIAL_DAILY_LIMIT must be positive: %d", c.TrialDailyLimit)
+	}
+	if c.TrialDurationHours <= 0 {
+		return fmt.Errorf("TRIAL_DURATION_HOURS must be positive: %d", c.TrialDurationHours)
+	}
+	if c.TrialTrafficGB <= 0 {
+		return fmt.Errorf("TRIAL_TRAFFIC_GB must be positive: %d", c.TrialTrafficGB)
+	}
+	if c.TrialIPLimit <= 0 {
+		return fmt.Errorf("TRIAL_IP_LIMIT must be positive: %d", c.TrialIPLimit)
+	}
+	if c.ExpiryNotifyInterval <= 0 || c.ExpiryNotifyInterval > 24*time.Hour {
+		return fmt.Errorf("EXPIRY_NOTIFY_INTERVAL_MIN out of range 1-1440: %v", c.ExpiryNotifyInterval)
+	}
+	if c.ExpiryNotifyBatch <= 0 {
+		return fmt.Errorf("EXPIRY_NOTIFY_BATCH must be positive: %d", c.ExpiryNotifyBatch)
+	}
+	if err := c.validateTrafficSync(); err != nil {
+		return err
 	}
 	return nil
 }

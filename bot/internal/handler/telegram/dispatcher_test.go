@@ -91,12 +91,12 @@ func (f *fakeLimiter) Allow(context.Context, int64) (bool, error) { return f.all
 
 func newDispatcher(api API, gate GateChecker, ban BanChecker, lim RateLimiter) *Dispatcher {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewDispatcher(api, gate, ban, lim, logger, groupLink, nil, nil, nil)
+	return NewDispatcher(api, gate, ban, lim, logger, groupLink, nil, nil, nil, nil)
 }
 
 func newDispatcherWithAdmins(api API, gate GateChecker, ban BanChecker, lim RateLimiter, admins []int64) *Dispatcher {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewDispatcher(api, gate, ban, lim, logger, groupLink, admins, nil, nil)
+	return NewDispatcher(api, gate, ban, lim, logger, groupLink, admins, nil, nil, nil)
 }
 
 func msgUpdate(uid int64, text string) *models.Update {

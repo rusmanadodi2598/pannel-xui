@@ -82,7 +82,7 @@ func newFakeTopup() *fakeTopupDeps {
 func dispatcherWithTopup(api API, f *fakeTopupDeps) *Dispatcher {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	topup := &Topup{Users: f.users, Topups: f.topups, FSM: f.fsm}
-	return NewDispatcher(api, &fakeGate{}, &fakeBan{}, &fakeLimiter{allow: true}, logger, groupLink, nil, nil, topup)
+	return NewDispatcher(api, &fakeGate{}, &fakeBan{}, &fakeLimiter{allow: true}, logger, groupLink, nil, nil, topup, nil)
 }
 
 var _ TopupRunner = (*fakeTopups)(nil)

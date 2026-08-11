@@ -54,18 +54,19 @@ type Dispatcher struct {
 	adminIDs  map[int64]struct{}
 	shop      *Shop  // M4 auto-order flows (FR-03/FR-05/FR-08)
 	topup     *Topup // M5 topup flow, gateway deferred (FR-06)
+	admin     *Admin // M6 admin panel (FR-11)
 }
 
 // NewDispatcher wires the dispatcher with its middleware dependencies.
 // adminIDs (from ADMIN_IDS) bypass the group gate — owner/admins do not need to
 // join the discussion group; the ban check still applies (PRD FR-01 deviation).
-// shop and topup may be nil in minimal tests that only exercise FR-01/FR-02.
-func NewDispatcher(api API, gate GateChecker, banned BanChecker, limiter RateLimiter, logger *slog.Logger, groupLink string, adminIDs []int64, shop *Shop, topup *Topup) *Dispatcher {
+// shop, topup and admin may be nil in minimal tests that only exercise FR-01/FR-02.
+func NewDispatcher(api API, gate GateChecker, banned BanChecker, limiter RateLimiter, logger *slog.Logger, groupLink string, adminIDs []int64, shop *Shop, topup *Topup, admin *Admin) *Dispatcher {
 	admins := make(map[int64]struct{}, len(adminIDs))
 	for _, id := range adminIDs {
 		admins[id] = struct{}{}
 	}
-	return &Dispatcher{api: api, gate: gate, banned: banned, limiter: limiter, logger: logger, groupLink: groupLink, adminIDs: admins, shop: shop, topup: topup}
+	return &Dispatcher{api: api, gate: gate, banned: banned, limiter: limiter, logger: logger, groupLink: groupLink, adminIDs: admins, shop: shop, topup: topup, admin: admin}
 }
 
 // Handle applies the middleware chain then routes the update. It is called
@@ -125,9 +126,22 @@ func (d *Dispatcher) route(ctx context.Context, upd *models.Update) {
 		d.handleStart(ctx, upd.Message)
 	case upd.Message != nil && upd.Message.Text == "/cancel":
 		d.handleCancel(ctx, upd.Message)
+	case upd.Message != nil && upd.Message.Text == "/trial":
+		// FR-07: /trial opens the trial menu directly.
+		if d.shop != nil && d.shop.Trials != nil && d.shop.TrialLm != nil && d.shop.TrialLm.Enabled() {
+			d.trialMenuSend(ctx, upd.Message)
+			return
+		}
+		d.send(ctx, upd.Message.Chat.ID, telegramservice.TrialDisabledText(), nil)
+	case upd.Message != nil && upd.Message.Text == "/admin":
+		// FR-11: /admin opens the admin panel (ADMIN_IDS only).
+		d.handleAdmin(ctx, upd.Message)
 	case upd.Message != nil && upd.Message.Text != "":
-		// FSM-aware: a pending topup custom-input consumes the next text.
+		// FSM-aware: pending topup custom-input or admin input consumes the text.
 		if d.topupHandleText(ctx, upd.Message) {
+			return
+		}
+		if d.adminHandleText(ctx, upd.Message) {
 			return
 		}
 		// Unrecognized text only answers in private chats — never in a group,
@@ -142,9 +156,10 @@ func (d *Dispatcher) route(ctx context.Context, upd *models.Update) {
 	}
 }
 
-// handleCancel aborts any pending flow (FR-06 custom input) and shows home.
+// handleCancel aborts any pending flow (FR-06 custom / FR-11 admin input) and shows home.
 func (d *Dispatcher) handleCancel(ctx context.Context, msg *models.Message) {
 	d.topupClearFSM(ctx, msg.From.ID)
+	d.adminClearFSM(ctx, msg.From.ID)
 	d.send(ctx, msg.Chat.ID, telegramservice.TopupCancelledText(), telegramservice.HomeKeyboard())
 }
 
@@ -153,6 +168,7 @@ func (d *Dispatcher) handleCancel(ctx context.Context, msg *models.Message) {
 // Any pending flow (topup custom input) is aborted — /start always restarts clean.
 func (d *Dispatcher) handleStart(ctx context.Context, msg *models.Message) {
 	d.topupClearFSM(ctx, msg.From.ID)
+	d.adminClearFSM(ctx, msg.From.ID)
 	d.send(ctx, msg.Chat.ID, telegramservice.HomeText(firstName(msg.From)), telegramservice.HomeKeyboard())
 }
 
@@ -174,6 +190,20 @@ func (d *Dispatcher) handleCallback(ctx context.Context, cb *models.CallbackQuer
 		cb.Data == telegramservice.CallbackAccount:
 		if d.shop != nil {
 			d.routeShop(ctx, cb)
+			return
+		}
+		d.answer(ctx, cb.ID, telegramservice.UnavailableText())
+	case strings.HasPrefix(cb.Data, "trial:"):
+		// FR-07: trial flow (nil-safe — lands when the trial service is wired).
+		if d.shop != nil && d.shop.Trials != nil && d.shop.TrialLm != nil {
+			d.routeTrial(ctx, cb)
+			return
+		}
+		d.answer(ctx, cb.ID, telegramservice.UnavailableText())
+	case strings.HasPrefix(cb.Data, "admin:"):
+		// FR-11: admin panel (nil-safe; non-admins are denied inside routeAdmin).
+		if d.admin != nil {
+			d.routeAdmin(ctx, cb)
 			return
 		}
 		d.answer(ctx, cb.ID, telegramservice.UnavailableText())

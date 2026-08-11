@@ -26,6 +26,9 @@ const (
 	RateLimitWindow = time.Minute
 	// UserLockTTL bounds the per-user serialization lock (PRD §14.2.4).
 	UserLockTTL = 30 * time.Second
+	// BanTTL bounds the gate-level ban marker; the DB flag is the source of
+	// truth, this long TTL is only a crash guard (FR-11).
+	BanTTL = 365 * 24 * time.Hour
 )
 
 // Key helpers delegate to the repository-level builders (single source of truth).

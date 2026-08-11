@@ -174,6 +174,84 @@ Auto-order end-to-end: **pricing DB + seed → beli → fulfillment → ledger �
 Env baru M4: `PRICING_SEED_FILE`, `PANEL_1_*` … `PANEL_N_*`
 (`PANEL_N_INSECURE=true` untuk panel self-signed).
 
+## Trial Flow (M6 partial, FR-07)
+
+- `trial:menu` (tombol 🎁 Trial di menu utama atau perintah `/trial`) →
+  **daily limit di-re-check** → pilih server (hanya server buyable) →
+  `trial:confirm:{id}` → **claim atomik** (anti-race, maks 2x/hari via Redis
+  counter `bot:trial:{userID}` TTL s.d. tengah malam) → `CreateTrial`
+  (order type `trial`, **tanpa debit**) → akun 1 jam / 1 GB / 1 IP
+  (`is_trial=true`) → pesan sukses + tombol "Beli VPN Premium".
+- Limit di-re-check di **menu, pilih server, DAN confirm** (PRD FR-07 AC-1);
+  claim yang melebihi limit di-rollback otomatis.
+- Env: `TRIAL_ENABLED` (false = fitur nonaktif), `TRIAL_DAILY_LIMIT` (2),
+  `TRIAL_DURATION_HOURS` (1), `TRIAL_TRAFFIC_GB` (1), `TRIAL_IP_LIMIT` (1).
+
+## Notifikasi Kadaluarsa (M6 partial, FR-09)
+
+Worker interval memindai akun yang hampir habis dan mengirim pengingat
+**H-7 / H-3 / H-1** (dapat dikonfigurasi via `EXPIRY_NOTIFY_DAYS`):
+
+- **Jendela eksklusif** `(lower, upper]` + guard `notified_expiry != ambang` →
+  **sekali per ambang** (AC FR-09); `notified_expiry` kini integer
+  (migrasi `000003`: 0 = belum, N = ambang terakhir terkirim).
+- Gagal kirim → **tidak** ditandai → retry sweep berikutnya; renewal
+  (`UpdateExpiry`) mereset flag → siklus notifikasi dimulai ulang.
+- Akun trial (1 jam) dan akun nonaktif/expired **tidak** di-notifikasi.
+- `internal/job/interval.go` — **`IntervalWorker` generik** (dipakai notifikasi
+  & traffic sync, bukan duplikasi loop): stdlib `time.Ticker` (bukan
+  robfig/cron; AGENTS.md prefer stdlib), sweep pertama langsung saat boot, lalu
+  tiap interval. Setiap sweep ber-timeout dan panic-recovered (AGENTS.md §1.6);
+  loop berhenti saat shutdown (ctx cancel + WaitGroup drain). Tanggal di pesan
+  diformat sesuai `TIME_LOCATION`.
+
+Env: `EXPIRY_NOTIFY_DAYS` (7,3,1), `EXPIRY_NOTIFY_ENABLED` (true),
+`EXPIRY_NOTIFY_INTERVAL_MIN` (360), `EXPIRY_NOTIFY_BATCH` (50 — maks akun per
+ambang per sweep).
+
+## Sync Traffic (M6, PRD §16.2)
+
+Worker interval menyinkronkan pemakaian kuota dari panel X-UI ke `vpn_clients`
+(`traffic_used/up/down`, `last_online`, `last_sync`) — data tampilan "Akun
+Saya" selalu segar tanpa N+1:
+
+- `service/traffic` mengambil kandidat aktif (client `is_active` & tidak
+  expired di server `is_active`) lalu **group per server**: `GetInbounds`
+  sekali per panel (field `clientStats` membawa traffic semua client — sumber
+  yang sama dengan `getClientTrafficsById`) + `GetOnlineClients` untuk
+  `last_online`.
+- `SyncTrafficBatch` menulis **satu statement** `UPDATE ... FROM (VALUES ...)`
+  (anti N+1 §1.7); `last_online = COALESCE(...)` — client offline
+  mempertahankan timestamp lama. Client yang sudah dihapus dari panel di-skip.
+- **Satu panel gagal tidak menggagalkan sweep** — log + lanjut server lain
+  (PRD §16.2); per-server timeout `XUI_API_TIMEOUT`.
+- Kandidat diurutkan `last_sync ASC NULLS FIRST` (fair round-robin bila batch
+  lebih kecil dari jumlah client).
+
+Env: `TRAFFIC_SYNC_ENABLED` (true), `TRAFFIC_SYNC_INTERVAL_MIN` (5 — 1-60),
+`TRAFFIC_SYNC_BATCH` (200).
+
+## Panel Admin (M6 partial, FR-11)
+
+`/admin` + callback `admin:*` — **hanya `ADMIN_IDS`** (di-re-check di setiap
+surface, AC FR-11). Input bebas (harga, broadcast, ID user) memakai FSM admin
+(`bot:fsm:admin:{id}`, TTL 10 mnt) — pola sama dengan nominal custom topup;
+`/cancel`, `/start`, dan tombol batal membersihkan FSM.
+
+- **Harga** — `admin:price` → daftar semua paket (termasuk nonaktif, bertanda
+  🚫) → detail paket → **Ubah Harga** (input angka rupiah) / **Toggle Status**
+  (aktif/nonaktif, harga live langsung berubah) / **Reload Seed** (re-import
+  `PRICING_SEED_FILE`).
+- **Broadcast** — input pesan → pratinjau → konfirmasi → pengiriman chunked
+  **100 pesan / 6 detik** di goroutine terbound (timeout 15 mnt, panic-recover,
+  lock Redis `bot:admin:broadcast` anti-double) → laporan hasil ke admin.
+- **Ban / Unban** — input Telegram ID → konfirmasi → **dua layer**: marker
+  gate Redis `bot:ban:{id}` (efek seketika) + flag persisten
+  `users.is_banned` (tahan Redis flush; guard debit SQL juga memblokir).
+- FSM di-clear setelah selesai/batal; input invalid → re-prompt.
+
+Belum di M6 (FR-11): manajemen server, statistik/audit log, adjust saldo.
+
 ## Menjalankan dengan Docker Compose (produksi)
 
 ```bash
@@ -284,5 +362,18 @@ pada dir legacy di `.golangci.yml` hanya untuk lint manual.
 > swap client, tanpa rewrite ulang. Env baru: `MIN_TOPUP_AMOUNT`,
 > `MAX_TOPUP_AMOUNT`, `QRIS_FEE_PERCENT`, `QRIS_PPN_PERCENT`,
 > `QRIS_EXPIRY_MINUTES` (default ada di `config`/`.env.example`).
-| M6 | Trial, notifikasi, multi-server, admin    | ⬜     |
-| M7 | Hardening, test, UAT                      | ⬜     |
+| M6 | Trial, notifikasi, sync traffic, admin     | ✅ (v1.21) |
+| M7 | Hardening, test, UAT                      | 🔶 (v1.22: coverage gap ✅, load test ✅, UAT checklist ✅) |
+
+> **M6 status (v1.21)**: **Trial (FR-07) ✅** — `service/trial` (daily limit
+> 2x/hari via Redis counter TTL s.d. tengah malam, claim anti-race + rollback),
+> flow `trial:menu` → `trial:server:{id}` → `trial:confirm:{id}` (+ `/trial`),
+> akun trial 1 jam / 1 GB / 1 IP (`is_trial=true`, **tanpa debit**), tombol
+> "Beli VPN Premium" setelah sukses. **Notifikasi kadaluarsa (FR-09) ✅** —
+> worker H-7/H-3/H-1 (section di bawah). **Admin (FR-11) ✅** — harga,
+> toggle plan, broadcast, ban/unban (section di bawah). **Sync traffic
+> (PRD §16.2) ✅** — worker interval sinkron kuota dari panel (section di
+> bawah). Env baru: `TRIAL_ENABLED`, `TRIAL_DAILY_LIMIT`, `TRIAL_DURATION_HOURS`,
+> `TRIAL_TRAFFIC_GB`, `TRIAL_IP_LIMIT`, `EXPIRY_NOTIFY_ENABLED`,
+> `EXPIRY_NOTIFY_INTERVAL_MIN`, `EXPIRY_NOTIFY_BATCH`, `TRAFFIC_SYNC_ENABLED`,
+> `TRAFFIC_SYNC_INTERVAL_MIN`, `TRAFFIC_SYNC_BATCH`.

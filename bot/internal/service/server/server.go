@@ -139,47 +139,10 @@ func (s *Service) PanelClient(ctx context.Context, serverID int64) (*xui.Client,
 }
 
 // CreateClient provisions a client on the panel for a purchase (FR-04).
-// It picks the server's enabled inbound matching the protocol and adds the
-// client with the computed expiry. Returns the created credential.
+// The expiry is computed from days (trial uses hours — see CreateTrialClient).
 func (s *Service) CreateClient(ctx context.Context, serverID int64, email, protocol string, days int, trafficGB, ipLimit int64) (domain.PanelClient, error) {
-	client, err := s.PanelClient(ctx, serverID)
-	if err != nil {
-		return domain.PanelClient{}, err
-	}
-	inbounds, err := client.GetInbounds(ctx)
-	if err != nil {
-		return domain.PanelClient{}, fmt.Errorf("listing panel inbounds: %w", err)
-	}
-	inbound, ok := matchInbound(inbounds, protocol)
-	if !ok {
-		return domain.PanelClient{}, fmt.Errorf("no enabled %s inbound on server %d", protocol, serverID)
-	}
-
 	expiry := time.Now().AddDate(0, 0, days).UnixMilli()
-	spec := xui.ClientSpec{
-		Email:      email,
-		LimitIP:    int(ipLimit),
-		TotalGB:    trafficGB,
-		ExpiryTime: expiry,
-		Enable:     true,
-	}
-	switch protocol {
-	case "vless", "vmess":
-		spec.ID = domain.NewUUID()
-	case "trojan", "shadowsocks":
-		spec.Password = domain.NewSecret(16)
-	}
-
-	if err := client.AddClient(ctx, xui.AddClientPayload{InboundID: inbound.ID, Client: spec}); err != nil {
-		return domain.PanelClient{}, fmt.Errorf("panel addClient: %w", err)
-	}
-	return domain.PanelClient{
-		InboundID: inbound.ID,
-		Email:     email,
-		UUID:      spec.ID,
-		Password:  spec.Password,
-		Protocol:  protocol,
-	}, nil
+	return s.provisionClient(ctx, serverID, email, protocol, trafficGB, ipLimit, expiry)
 }
 
 // RenewClient extends an existing client's expiry on the panel (FR-05).

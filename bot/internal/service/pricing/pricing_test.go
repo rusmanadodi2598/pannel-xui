@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 )
 
@@ -117,6 +118,43 @@ func TestService_EnsureSeeded_GivenNilSeeder_ThenNoop(t *testing.T) {
 	}
 }
 
+func TestService_AdminOps_GivenPlan_ThenSetPriceEnabledAndListAll(t *testing.T) {
+	store := &fakePricingStore{}
+	svc := New(store, nil)
+	ctx := context.Background()
+
+	store.all = []postgres.Pricing{
+		{CountryCode: "ID", PlanDays: 15, Price: 4000, Enabled: true},
+		{CountryCode: "ID", PlanDays: 30, Price: 7000, Enabled: false},
+	}
+	plans, err := svc.ListAll(ctx)
+	if err != nil || len(plans) != 2 || plans[1].Enabled {
+		t.Fatalf("ListAll = %v, err %v", plans, err)
+	}
+
+	if err := svc.SetPrice(ctx, "ID", 30, 7500); err != nil {
+		t.Fatalf("SetPrice: %v", err)
+	}
+	if store.lastCountry != "ID" || store.lastDays != 30 || store.lastPrice != 7500 {
+		t.Errorf("SetPrice recorded %s/%d/%d", store.lastCountry, store.lastDays, store.lastPrice)
+	}
+
+	if err := svc.SetEnabled(ctx, "ID", 15, false); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	if store.lastEnabled == nil || *store.lastEnabled {
+		t.Errorf("SetEnabled recorded %v, want false", store.lastEnabled)
+	}
+
+	store.plan = &postgres.Pricing{CountryCode: "ID", PlanDays: 90, Price: 20000, Enabled: false}
+	if _, err := svc.Get(ctx, "ID", 90); err != nil {
+		t.Errorf("Get (any state) failed: %v", err)
+	}
+	if err := svc.Reload(ctx); err != nil {
+		t.Errorf("Reload (nil seeder) must noop, got: %v", err)
+	}
+}
+
 func writeSeed(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -129,10 +167,15 @@ func writeSeed(t *testing.T, content string) string {
 
 // fakePricingStore implements Store.
 type fakePricingStore struct {
-	upserted []postgres.Pricing
-	enabled  []postgres.Pricing
-	plan     *postgres.Pricing
-	err      error
+	upserted    []postgres.Pricing
+	enabled     []postgres.Pricing
+	all         []postgres.Pricing
+	plan        *postgres.Pricing
+	err         error
+	lastPrice   domain.Money
+	lastEnabled *bool
+	lastCountry string
+	lastDays    int
 }
 
 func (f *fakePricingStore) UpsertMany(_ context.Context, rows []postgres.Pricing) error {
@@ -147,6 +190,23 @@ func (f *fakePricingStore) GetPlan(_ context.Context, _ string, _ int) (*postgre
 		return nil, errNoPlan
 	}
 	return f.plan, nil
+}
+func (f *fakePricingStore) ListAll(context.Context) ([]postgres.Pricing, error) {
+	return f.all, f.err
+}
+func (f *fakePricingStore) Get(_ context.Context, _ string, _ int) (*postgres.Pricing, error) {
+	if f.plan == nil {
+		return nil, errNoPlan
+	}
+	return f.plan, nil
+}
+func (f *fakePricingStore) SetPrice(_ context.Context, country string, days int, price domain.Money) error {
+	f.lastCountry, f.lastDays, f.lastPrice = country, days, price
+	return f.err
+}
+func (f *fakePricingStore) SetEnabled(_ context.Context, country string, days int, enabled bool) error {
+	f.lastCountry, f.lastDays, f.lastEnabled = country, days, &enabled
+	return f.err
 }
 
 var errNoPlan = errors.New("plan not found")

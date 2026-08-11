@@ -24,6 +24,10 @@ type Store interface {
 	GetByTelegramID(ctx context.Context, tgID int64) (*postgres.User, error)
 	Debit(ctx context.Context, userID int64, amount domain.Money, orderID string) (domain.Money, error)
 	Credit(ctx context.Context, userID int64, amount domain.Money, orderID string) (domain.Money, error)
+	// FR-11 admin operations.
+	SetBanned(ctx context.Context, tgID int64, banned bool) error
+	ListTelegramIDs(ctx context.Context, limit, offset int) ([]int64, error)
+	CountUsers(ctx context.Context) (int64, error)
 }
 
 // Service orchestrates user identity and balance moves.
@@ -60,4 +64,19 @@ func (s *Service) Debit(ctx context.Context, userID int64, amount domain.Money, 
 // Credit atomically adds amount (topup) and appends a ledger row.
 func (s *Service) Credit(ctx context.Context, userID int64, amount domain.Money, orderID string) (domain.Money, error) {
 	return s.store.Credit(ctx, userID, amount, orderID)
+}
+
+// SetBanned flips the persistent ban flag (FR-11; gate marker is separate).
+func (s *Service) SetBanned(ctx context.Context, tgID int64, banned bool) error {
+	return s.store.SetBanned(ctx, tgID, banned)
+}
+
+// ListTelegramIDs pages registered user ids for the admin broadcast (FR-11).
+func (s *Service) ListTelegramIDs(ctx context.Context, limit, offset int) ([]int64, error) {
+	return s.store.ListTelegramIDs(ctx, limit, offset)
+}
+
+// CountUsers returns the number of registered users (broadcast sizing, FR-11).
+func (s *Service) CountUsers(ctx context.Context) (int64, error) {
+	return s.store.CountUsers(ctx)
 }

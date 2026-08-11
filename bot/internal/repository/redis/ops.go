@@ -26,6 +26,9 @@ func RateLimitKey(userID int64) string     { return fmt.Sprintf("bot:rl:%d", use
 func BanKey(userID int64) string           { return fmt.Sprintf("bot:ban:%d", userID) }
 func UserLockKey(userID int64) string      { return fmt.Sprintf("bot:lock:user:%d", userID) }
 func TopupFSMKey(userID int64) string      { return fmt.Sprintf("bot:fsm:topup:%d", userID) }
+func TrialCounterKey(userID int64) string  { return fmt.Sprintf("bot:trial:%d", userID) }
+func AdminFSMKey(userID int64) string      { return fmt.Sprintf("bot:fsm:admin:%d", userID) }
+func AdminBroadcastKey() string            { return "bot:admin:broadcast" }
 
 // SetNX stores value only when the key is absent (idempotency, dedup).
 // It returns true when the key was newly created.
@@ -72,6 +75,15 @@ func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("redis exists %s: %w", key, err)
 	}
 	return n > 0, nil
+}
+
+// Decr lowers a counter (rollback of an over-limit trial claim, FR-07 AC-1).
+func (c *Client) Decr(ctx context.Context, key string) (int64, error) {
+	n, err := c.rdb.Decr(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis decr %s: %w", key, err)
+	}
+	return n, nil
 }
 
 // SlidingWindow implements a per-key sliding-window rate limit: every call

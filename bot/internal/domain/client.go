@@ -80,6 +80,32 @@ type PanelClient struct {
 	Protocol  string
 }
 
+// NewTrialClient builds a short-lived trial client record (FR-07 AC-2):
+// is_trial=true, quota 1 GB / 1 IP (default), expiry = now + hours.
+func NewTrialClient(userID, serverID int64, inboundID int, email, protocol, uuid, password string, hours int, trafficGB, ipLimit int64) (*VPNClient, error) {
+	if email == "" {
+		return nil, fmt.Errorf("client email is required")
+	}
+	if protocol == "" {
+		return nil, fmt.Errorf("client protocol is required")
+	}
+	expiry := time.Now().Add(time.Duration(hours) * time.Hour)
+	return &VPNClient{
+		UserID:       userID,
+		ServerID:     serverID,
+		InboundID:    inboundID,
+		Email:        email,
+		UUID:         uuid,
+		Password:     password,
+		Protocol:     protocol,
+		TrafficLimit: trafficGB * 1024 * 1024 * 1024, // GB → bytes
+		IPLimit:      int(ipLimit),
+		IsActive:     true,
+		IsTrial:      true,
+		ExpiresAt:    &expiry,
+	}, nil
+}
+
 // Expired reports whether the client is past its expiry.
 func (c *VPNClient) Expired(now time.Time) bool {
 	return c.ExpiresAt != nil && !c.ExpiresAt.After(now)
