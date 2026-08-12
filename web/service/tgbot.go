@@ -689,7 +689,7 @@ func (t *Tgbot) onlineClients(chatId int64) {
 		keyboard := tgbotapi.NewInlineKeyboardMarkup()
 		for index, online := range onlines {
 			keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%d: %s\r\n", index+1, online), "client_"+online.Email)))
+				tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%d: %s\r\n", index+1, online.Email), "client_"+online.Email)))
 		}
 		t.SendMsgToTgbot(chatId, output, keyboard)
 	} else {
