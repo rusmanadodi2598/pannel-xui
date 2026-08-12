@@ -76,6 +76,14 @@ type Config struct {
 	TrialCleanupEnabled  bool
 	TrialCleanupInterval time.Duration
 	TrialCleanupBatch    int
+
+	// FR-13 subscription: panel sub server public URL + paths (Opsi 2: domain
+	// sama dengan panel, port beda — default sub server 2096).
+	SubEnabled     bool
+	SubBaseURL     string // public base, e.g. https://id2.kentangtechstore.net:2096
+	SubPath        string // panel subPath (default /sub)
+	SubJSONEnabled bool
+	SubJSONPath    string // panel subJsonPath (default /json)
 }
 
 // Load reads the environment, applies defaults and validates every field.
@@ -217,6 +225,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.applyTrialCleanup(); err != nil {
+		return nil, err
+	}
+	if err := cfg.applySubscription(); err != nil {
 		return nil, err
 	}
 

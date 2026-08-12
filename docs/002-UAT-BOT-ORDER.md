@@ -299,6 +299,32 @@
 - [ ] Trial baru yang dibuat setelah sweep terakhir → tidak di-disable prematur
       (guard `expires_at <= now()`)
 
+## 7d. Subscription URL (FR-13, v1.46 — Opsi 2)
+
+**Prasyarat panel (di luar kode bot):** setting sub server panel aktif
+(`subEnable=true` di panel, `subPath`/`subJsonPath` match config bot,
+`subPort` reachable publik).
+
+- [ ] Beli akun baru (SUB_ENABLED=true) → `vpn_clients.sub_id` terisi + `=`
+      subId client di panel (cek JSON settings inbound) + `subscription_url`
+      = `{SUB_BASE_URL}{SUB_PATH}/{sub_id}`
+- [ ] Ekspor .txt akun baru → memuat `Subscription URL (auto-update)` +
+      `Subscription JSON (Clash/Meta)` (bila `SUB_JSON_ENABLED=true`)
+- [ ] Detail akun & view Config V2Ray TIDAK menampilkan URL sub (URL hanya
+      di ekspor .txt — konsisten v1.36)
+- [ ] Akun trial baru → `sub_id` juga terisi (trial ikut dapat sub URL di
+      ekspor)
+- [ ] Akun lama (dibuat sebelum v1.46) → kolom kosong, ekspor TANPA blok sub
+      (legacy gap terdokumentasi, tanpa backfill)
+- [ ] Renew akun → `sub_id`/URL tetap (tidak berubah saat perpanjang)
+- [ ] Import URL sub di v2rayNG/Clash → konten link valid (share link semua
+      protokol dari sub server panel, host = Host saat fetch — harus resolve
+      ke server yang sama dengan panel)
+- [ ] `SUB_ENABLED=false` (default) → kolom tetap kosong, ekspor tanpa blok;
+      bot boot normal
+- [ ] `SUB_BASE_URL` invalid / kosong saat `SUB_ENABLED=true` → boot fail-fast
+      dengan pesan jelas
+
 ## 8. Keamanan & operasional
 
 - [x] Webhook secret: body tanpa/token salah → **403 tanpa diproses**

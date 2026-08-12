@@ -73,6 +73,10 @@ func (s *Service) CreateTrial(ctx context.Context, user *postgres.User, serverID
 	client.ConfigLink = pc.ConfigLink
 	client.InboundNetwork = pc.InboundNetwork
 	client.InboundPath = pc.InboundPath
+	// FR-13: trial accounts carry a subId too — persist it + the sub URLs.
+	client.SubID = pc.SubID
+	client.SubscriptionURL = s.subLinks.URL(pc.SubID)
+	client.SubscriptionJSONURL = s.subLinks.JSONURL(pc.SubID)
 	row := toClientRow(client)
 	if err := s.clients.Create(ctx, row); err != nil {
 		_ = order.MarkFailed("gagal menyimpan akun trial")

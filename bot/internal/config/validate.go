@@ -113,5 +113,8 @@ func (c *Config) validate() error {
 	if err := c.validateTrialCleanup(); err != nil {
 		return err
 	}
+	if err := c.validateSubscription(); err != nil {
+		return err
+	}
 	return nil
 }

@@ -42,6 +42,8 @@ func toClientRow(c *domain.VPNClient) *postgres.VPNClient {
 		TrafficLimit: c.TrafficLimit, IPLimit: c.IPLimit, IsActive: true,
 		IsTrial: c.IsTrial, ExpiresAt: c.ExpiresAt, ConfigLink: c.ConfigLink,
 		InboundNetwork: c.InboundNetwork, InboundPath: c.InboundPath,
+		SubID: c.SubID, SubscriptionURL: c.SubscriptionURL,
+		SubscriptionJSONURL: c.SubscriptionJSONURL,
 	}
 }
 

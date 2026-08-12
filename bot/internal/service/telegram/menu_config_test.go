@@ -184,3 +184,27 @@ func TestAccountTXTContent_GivenWSRealPath_ThenDualLinksIncluded(t *testing.T) {
 		t.Errorf("export must use dual links, not native fallback:\n%s", content)
 	}
 }
+
+func TestAccountTXTContent_GivenSubscriptionURLs_ThenIncluded(t *testing.T) {
+	c := wsViewClient("vless", "uuid-1", "", "kts-abcd9999", "vless://native", "ws", "/vlessws")
+	c.SubscriptionURL = "https://p.example.com:2096/sub/kts-abcd9999"
+	c.SubscriptionJSONURL = "https://p.example.com:2096/json/kts-abcd9999"
+	content := AccountTXTContent(c, time.Now())
+	for _, want := range []string{
+		"Subscription URL (auto-update):", "https://p.example.com:2096/sub/kts-abcd9999",
+		"Subscription JSON (Clash/Meta):", "https://p.example.com:2096/json/kts-abcd9999",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("export missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestAccountTXTContent_GivenNoSubscriptionURL_ThenAbsent(t *testing.T) {
+	c := wsViewClient("vless", "uuid-1", "", "kts-abcd9999", "vless://native", "ws", "/vlessws")
+	content := AccountTXTContent(c, time.Now())
+	// Legacy accounts (sebelum FR-13) punya kolom kosong — blok tidak muncul.
+	if strings.Contains(content, "Subscription URL (auto-update):") {
+		t.Errorf("legacy account must not show the subscription block:\n%s", content)
+	}
+}

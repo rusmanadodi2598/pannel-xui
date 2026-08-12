@@ -18,34 +18,36 @@ import (
 
 // VPNClient is a client provisioned on an X-UI panel (PRD §13.3).
 type VPNClient struct {
-	ID              int64
-	UserID          int64
-	ServerID        int64
-	InboundID       int
-	Email           string
-	UUID            string
-	Password        string
-	Protocol        string
-	Flow            string
-	TrafficLimit    int64
-	TrafficUsed     int64
-	TrafficUp       int64
-	TrafficDown     int64
-	IPLimit         int
-	IsBanned        bool
-	IsActive        bool
-	IsExpired       bool
-	IsTrial         bool
-	ExpiresAt       *time.Time
-	ConfigLink      string
-	SubscriptionURL string
-	InboundNetwork  string // transport asli inbound (ws/grpc/…) — path dinamis v1.27
-	InboundPath     string // path asli (wsSettings.path / grpcSettings.serviceName)
-	LastOnline      *time.Time
-	CreatedAt       time.Time
-	ServerName      string
-	FlagEmoji       string
-	CountryCode     string
+	ID                  int64
+	UserID              int64
+	ServerID            int64
+	InboundID           int
+	Email               string
+	UUID                string
+	Password            string
+	Protocol            string
+	Flow                string
+	TrafficLimit        int64
+	TrafficUsed         int64
+	TrafficUp           int64
+	TrafficDown         int64
+	IPLimit             int
+	IsBanned            bool
+	IsActive            bool
+	IsExpired           bool
+	IsTrial             bool
+	ExpiresAt           *time.Time
+	ConfigLink          string
+	SubscriptionURL     string
+	SubscriptionJSONURL string // FR-13: JSON/Clash sub (kosong bila disabled)
+	SubID               string // FR-13: subId yang dikirim ke panel (basis sub URL)
+	InboundNetwork      string // transport asli inbound (ws/grpc/…) — path dinamis v1.27
+	InboundPath         string // path asli (wsSettings.path / grpcSettings.serviceName)
+	LastOnline          *time.Time
+	CreatedAt           time.Time
+	ServerName          string
+	FlagEmoji           string
+	CountryCode         string
 }
 
 // NewVPNClient builds the client record after a successful panel addClient.
@@ -79,6 +81,8 @@ func NewVPNClient(userID, serverID int64, inboundID int, email, protocol, uuid, 
 // panel's sub server may be disabled (M7 detail/export feature). InboundNetwork
 // + InboundPath mirror the inbound's real transport (ws/grpc + path) so the
 // dual TLS/non-TLS config links use the actual path per inbound (v1.27).
+// SubID mirrors the subId the bot sent to the panel (FR-13): the order flow
+// persists it and builds the subscription URL from it.
 type PanelClient struct {
 	InboundID      int
 	Email          string
@@ -88,6 +92,7 @@ type PanelClient struct {
 	ConfigLink     string
 	InboundNetwork string
 	InboundPath    string
+	SubID          string
 }
 
 // NewTrialClient builds a short-lived trial client record (FR-07 AC-2):

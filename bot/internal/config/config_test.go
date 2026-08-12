@@ -102,6 +102,11 @@ func TestLoad_InvalidValues(t *testing.T) {
 		{"invalid trial cleanup enabled", func(e map[string]string) { e["TRIAL_CLEANUP_ENABLED"] = "abc" }},
 		{"invalid trial cleanup interval", func(e map[string]string) { e["TRIAL_CLEANUP_INTERVAL_MIN"] = "0" }},
 		{"invalid trial cleanup batch", func(e map[string]string) { e["TRIAL_CLEANUP_BATCH"] = "0" }},
+		{"invalid sub enabled", func(e map[string]string) { e["SUB_ENABLED"] = "abc" }},
+		{"sub enabled without base url", func(e map[string]string) { e["SUB_ENABLED"] = "true"; e["SUB_BASE_URL"] = "" }},
+		{"invalid sub base url", func(e map[string]string) { e["SUB_ENABLED"] = "true"; e["SUB_BASE_URL"] = "not-a-url" }},
+		{"invalid sub path", func(e map[string]string) { e["SUB_PATH"] = "noslash" }},
+		{"invalid sub json path", func(e map[string]string) { e["SUB_JSON_PATH"] = "nopath" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -189,6 +194,35 @@ func TestLoad_Defaults(t *testing.T) {
 	if !cfg.TrialCleanupEnabled || cfg.TrialCleanupInterval != 15*time.Minute || cfg.TrialCleanupBatch != 50 {
 		t.Errorf("trial cleanup = %v/%v/%d, want true/15m/50",
 			cfg.TrialCleanupEnabled, cfg.TrialCleanupInterval, cfg.TrialCleanupBatch)
+	}
+	if cfg.SubEnabled || cfg.SubBaseURL != "" || cfg.SubPath != "/sub" || cfg.SubJSONPath != "/json" {
+		t.Errorf("subscription defaults = %v/%q/%q/%q, want false//'/sub'/'/json'",
+			cfg.SubEnabled, cfg.SubBaseURL, cfg.SubPath, cfg.SubJSONPath)
+	}
+}
+
+func TestLoad_SubscriptionEnabled(t *testing.T) {
+	env := validEnv()
+	env["SUB_ENABLED"] = "true"
+	env["SUB_BASE_URL"] = "https://id2.kentangtechstore.net:2096"
+	env["SUB_PATH"] = "/sub/"
+	env["SUB_JSON_ENABLED"] = "true"
+	env["SUB_JSON_PATH"] = "/json"
+	applyEnv(t, env)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.SubEnabled || cfg.SubBaseURL != "https://id2.kentangtechstore.net:2096" {
+		t.Errorf("sub config = %v/%q, want true/base URL", cfg.SubEnabled, cfg.SubBaseURL)
+	}
+	// normalizeSubPath trims the trailing slash (join in SubLinks is canonical).
+	if cfg.SubPath != "/sub" {
+		t.Errorf("SubPath = %q, want /sub (trailing slash trimmed)", cfg.SubPath)
+	}
+	if !cfg.SubJSONEnabled || cfg.SubJSONPath != "/json" {
+		t.Errorf("json sub = %v/%q, want true//json", cfg.SubJSONEnabled, cfg.SubJSONPath)
 	}
 }
 

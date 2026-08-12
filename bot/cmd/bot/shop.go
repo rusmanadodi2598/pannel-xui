@@ -93,6 +93,19 @@ func buildShop(ctx context.Context, cfg *config.Config, db *postgres.Repository,
 		orderNotify = &orderNotifier{tg: tgClient, chatID: cfg.NotificationGroupID, logger: logger}
 	}
 	orders := ordersvc.New(orderRepo, clientRepo, userRepo, pricing, servers, servers, orderNotify)
+	// FR-13 (v1.46): sub server URL prefix + paths (Opsi 2 — domain sama dengan
+	// panel, port beda; default panel subPort 2096). The order flow persists
+	// these URLs; only the .txt export ships them to the user. JSON sub hanya
+	// diaktifkan bila SUB_JSON_ENABLED (kalau tidak, path dikosongkan).
+	subJSONPath := ""
+	if cfg.SubJSONEnabled {
+		subJSONPath = cfg.SubJSONPath
+	}
+	orders.SetSubLinks(ordersvc.SubLinks{
+		BaseURL:  cfg.SubBaseURL,
+		LinkPath: cfg.SubPath,
+		JSONPath: subJSONPath,
+	})
 
 	// M6 (FR-07): trial daily limit via Redis counter with end-of-day TTL;
 	// the account defaults (hours/GB/IP) come from config, not hardcode.

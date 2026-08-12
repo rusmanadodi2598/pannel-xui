@@ -98,5 +98,8 @@ func (s *Service) provisionClient(ctx context.Context, serverID int64, inboundID
 			UUID: spec.ID, Password: credential, Auth: spec.Auth, Flow: spec.Flow,
 		})
 	}
+	// FR-13: expose the subId sent to the panel so the order flow can persist
+	// it and build the subscription URL (v1.46).
+	pc.SubID = spec.SubID
 	return pc, nil
 }

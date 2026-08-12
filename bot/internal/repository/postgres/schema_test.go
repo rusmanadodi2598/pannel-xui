@@ -162,6 +162,7 @@ var expectedTables = map[string][]string{
 		"protocol", "flow", "traffic_limit", "traffic_used", "traffic_up",
 		"traffic_down", "ip_limit", "is_banned", "is_active", "is_expired",
 		"is_trial", "expires_at", "config_link", "subscription_url",
+		"subscription_json_url", "sub_id",
 		"inbound_network", "inbound_path",
 		"notified_expiry", "last_sync", "last_online", "created_at", "updated_at",
 	},

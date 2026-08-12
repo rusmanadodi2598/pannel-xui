@@ -80,14 +80,15 @@ type PanelGateway interface {
 
 // Service orchestrates order creation, fulfillment and completion.
 type Service struct {
-	orders  OrderStore
-	clients ClientStore
-	users   UserStore
-	plans   PlanReader
-	servers ServerPicker
-	panels  PanelGateway
-	newID   func() string // injectable for tests; default domain.NewOrderID
-	notify  OrderNotifier // FR-04 AC admin-group notice (nil = disabled)
+	orders   OrderStore
+	clients  ClientStore
+	users    UserStore
+	plans    PlanReader
+	servers  ServerPicker
+	panels   PanelGateway
+	newID    func() string // injectable for tests; default domain.NewOrderID
+	notify   OrderNotifier // FR-04 AC admin-group notice (nil = disabled)
+	subLinks SubLinks      // FR-13: panel sub server URLs (SetSubLinks at wiring)
 }
 
 // New builds the order service. The trailing notifier is optional (variadic

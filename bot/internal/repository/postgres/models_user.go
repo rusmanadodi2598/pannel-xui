@@ -42,34 +42,36 @@ func (User) TableName() string { return "users" }
 
 // VPNClient mirrors the `vpn_clients` table (PRD §13.3).
 type VPNClient struct {
-	ID              int64      `gorm:"primaryKey"`
-	UserID          int64      `gorm:"index:idx_vpn_clients_user_id;not null"`
-	ServerID        int64      `gorm:"not null"`
-	InboundID       int        `gorm:"not null"`
-	Email           string     `gorm:"uniqueIndex;not null"`
-	UUID            string     `gorm:"type:text"`
-	Password        string     `gorm:"type:text"`
-	Protocol        string     `gorm:"type:text;not null"`
-	Flow            string     `gorm:"type:text"`
-	TrafficLimit    int64      `gorm:"not null;default:0"`
-	TrafficUsed     int64      `gorm:"not null;default:0"`
-	TrafficUp       int64      `gorm:"not null;default:0"`
-	TrafficDown     int64      `gorm:"not null;default:0"`
-	IPLimit         int        `gorm:"not null;default:1"`
-	IsBanned        bool       `gorm:"not null;default:false"`
-	IsActive        bool       `gorm:"not null;default:true"`
-	IsExpired       bool       `gorm:"not null;default:false"`
-	IsTrial         bool       `gorm:"not null;default:false"`
-	ExpiresAt       *time.Time `gorm:"type:timestamptz"`
-	ConfigLink      string     `gorm:"type:text"`
-	SubscriptionURL string     `gorm:"type:text"`
-	InboundNetwork  string     `gorm:"type:text;not null;default:''"` // transport asli (ws/grpc/…) — v1.27
-	InboundPath     string     `gorm:"type:text;not null;default:''"` // path asli inbound (dinamis)
-	NotifiedExpiry  int        `gorm:"not null;default:0"`            // FR-09: ambang hari terakhir dikirim (0/7/3/1)
-	LastSync        *time.Time `gorm:"type:timestamptz"`
-	LastOnline      *time.Time `gorm:"type:timestamptz"`
-	CreatedAt       time.Time  `gorm:"type:timestamptz;not null;default:now()"`
-	UpdatedAt       time.Time  `gorm:"type:timestamptz;not null;default:now()"`
+	ID                  int64      `gorm:"primaryKey"`
+	UserID              int64      `gorm:"index:idx_vpn_clients_user_id;not null"`
+	ServerID            int64      `gorm:"not null"`
+	InboundID           int        `gorm:"not null"`
+	Email               string     `gorm:"uniqueIndex;not null"`
+	UUID                string     `gorm:"type:text"`
+	Password            string     `gorm:"type:text"`
+	Protocol            string     `gorm:"type:text;not null"`
+	Flow                string     `gorm:"type:text"`
+	TrafficLimit        int64      `gorm:"not null;default:0"`
+	TrafficUsed         int64      `gorm:"not null;default:0"`
+	TrafficUp           int64      `gorm:"not null;default:0"`
+	TrafficDown         int64      `gorm:"not null;default:0"`
+	IPLimit             int        `gorm:"not null;default:1"`
+	IsBanned            bool       `gorm:"not null;default:false"`
+	IsActive            bool       `gorm:"not null;default:true"`
+	IsExpired           bool       `gorm:"not null;default:false"`
+	IsTrial             bool       `gorm:"not null;default:false"`
+	ExpiresAt           *time.Time `gorm:"type:timestamptz"`
+	ConfigLink          string     `gorm:"type:text"`
+	SubscriptionURL     string     `gorm:"type:text"`
+	SubscriptionJSONURL string     `gorm:"type:text"`                     // FR-13: JSON/Clash sub URL
+	SubID               string     `gorm:"type:text"`                     // FR-13: subId panel (basis sub URL)
+	InboundNetwork      string     `gorm:"type:text;not null;default:''"` // transport asli (ws/grpc/…) — v1.27
+	InboundPath         string     `gorm:"type:text;not null;default:''"` // path asli inbound (dinamis)
+	NotifiedExpiry      int        `gorm:"not null;default:0"`            // FR-09: ambang hari terakhir dikirim (0/7/3/1)
+	LastSync            *time.Time `gorm:"type:timestamptz"`
+	LastOnline          *time.Time `gorm:"type:timestamptz"`
+	CreatedAt           time.Time  `gorm:"type:timestamptz;not null;default:now()"`
+	UpdatedAt           time.Time  `gorm:"type:timestamptz;not null;default:now()"`
 }
 
 // TableName keeps GORM on the exact PRD table name.

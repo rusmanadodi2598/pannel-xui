@@ -400,6 +400,36 @@ menonaktifkannya:
 Env: `TRIAL_CLEANUP_ENABLED` (true), `TRIAL_CLEANUP_INTERVAL_MIN` (15 —
 1-1440), `TRIAL_CLEANUP_BATCH` (50).
 
+## Subscription URL (FR-13, v1.46)
+
+Gap terakhir FR-13 — bagian (a) **subscription URL** (bagian (b) share link
+per protokol sudah selesai v1.26–v1.33, dikirim via Ekspor .txt):
+
+- Setiap client yang dibuat bot (beli **dan** trial) sudah mengirim `subId`
+  ke panel sejak awal (`provisionClient`); sejak v1.46 nilai itu **di-persist**
+  (`vpn_clients.sub_id`, migrasi `000006`) dan bot membangun
+  **subscription URL** = `{SUB_BASE_URL}{SUB_PATH}/{subId}` +
+  **JSON/Clash URL** = `{SUB_BASE_URL}{SUB_JSON_PATH}/{subId}`.
+- **Opsi 2 (keputusan user)**: domain sama dengan panel, **port beda** —
+  sub server panel default `:2096` (`sub/sub.go`, setting `subPort`).
+  `SUB_BASE_URL` = `https://<panel-host>:2096` (harus match setting panel:
+  `subEnable=true`, `subPath` default `/sub/`, `subJsonPath` default `/json/`;
+  trailing slash di path dinormalisasi bot).
+- **URL hanya di Ekspor .txt** (konsisten v1.36): `AccountTXTContent`
+  menambahkan blok `Subscription URL (auto-update)` + `Subscription JSON
+  (Clash/Meta)` — chat & detail akun tetap bersih; **akun lama** (dibuat
+  sebelum v1.46, `sub_id` kosong) dilewati tanpa backfill (**legacy gap
+  terdokumentasi** — keputusan user).
+- Renew otomatis mempertahankan `subId` (updateClient patch raw spec) —
+  URL tidak berubah saat perpanjang.
+- **Prasyarat operasional**: sub server panel aktif (setting `subEnable`),
+  path/port match config bot, dan port sub reachable publik (firewall);
+  link di dalam konten sub memakai Host saat fetch → host sub harus resolve
+  ke server yang sama dengan panel/VPN.
+
+Env: `SUB_ENABLED` (false), `SUB_BASE_URL`,
+`SUB_PATH` (`/sub`), `SUB_JSON_ENABLED` (false), `SUB_JSON_PATH` (`/json`).
+
 ## Panel Admin (M6 partial, FR-11)
 
 `/admin` + callback `admin:*` — **hanya `ADMIN_IDS`** (di-re-check di setiap
@@ -574,7 +604,7 @@ pada dir legacy di `.golangci.yml` hanya untuk lint manual.
 > `MAX_TOPUP_AMOUNT`, `QRIS_FEE_PERCENT`, `QRIS_PPN_PERCENT`,
 > `QRIS_EXPIRY_MINUTES` (default ada di `config`/`.env.example`).
 | M6 | Trial, notifikasi, sync traffic, admin     | ✅ (v1.21) |
-| M7 | Hardening, test, UAT                      | 🔶 (v1.22: coverage gap ✅, load test ✅, UAT checklist ✅; v1.26: **config v2Ray dual TLS/non-TLS ✅**; v1.28: **Riwayat FR-14 ✅**; v1.29: **Bantuan FR-15 ✅**; v1.30: **pagination Akun FR-08 AC-1 ✅**; v1.31: **hapus akun FR-08 AC-4 ✅**; v1.32: **traffic + refresh manual FR-08 AC-3 ✅**; v1.33: **convert YAML Clash/Meta FR-08 AC-2 ✅**; v1.34: **status display list Akun FR-08 AC-1 ✅**; v1.35: **detail akun AC-1 lengkap (Limit IP + traffic terpakai) ✅ + hapus tercatat di Riwayat AC-4 ✅**; v1.36: **revisi minor UI akun (UUID/Password protocol-aware; URL build hanya di ekspor .txt; sukses Beli/Trial tanpa URL) ✅**; v1.37: **renew paid-only + idempotence (FindInFlight) + debit-first auto-refund ✅**; v1.38: **fix renew panel "empty client ID" — spec penuh client dipertahankan, PanelClientKey per-protocol ✅**; v1.39: **adjust saldo admin + idempotence confirm ✅**; v1.40: **manajemen server + statistik + audit log admin (FR-11 lengkap) ✅**; v1.41: **notifikasi order sukses ke grup admin (FR-04 AC) ✅**; v1.42: **UX keyboard zigzag 2-1-2-1 semua sub-menu (packRows di menu_rows.go) ✅**; v1.43: **brand KENTANG TECH di semua template notifikasi/pesan transaksi (banner 🏪 pengecualian icon policy) ✅**; v1.44: **konsistensi brand ditutup — ringkasan konfirmasi + pesan gagal ber-brand, ejaan diseragamkan (txt/home/info pakai BrandName) ✅**; v1.45: **worker health check panel (PRD §17 — server mati tidak dijual, ListBuyable filter health_status=down) + worker trial cleanup (disable akun trial expired di panel lalu tandai is_expired) ✅**) |
+| M7 | Hardening, test, UAT                      | 🔶 (v1.22: coverage gap ✅, load test ✅, UAT checklist ✅; v1.26: **config v2Ray dual TLS/non-TLS ✅**; v1.28: **Riwayat FR-14 ✅**; v1.29: **Bantuan FR-15 ✅**; v1.30: **pagination Akun FR-08 AC-1 ✅**; v1.31: **hapus akun FR-08 AC-4 ✅**; v1.32: **traffic + refresh manual FR-08 AC-3 ✅**; v1.33: **convert YAML Clash/Meta FR-08 AC-2 ✅**; v1.34: **status display list Akun FR-08 AC-1 ✅**; v1.35: **detail akun AC-1 lengkap (Limit IP + traffic terpakai) ✅ + hapus tercatat di Riwayat AC-4 ✅**; v1.36: **revisi minor UI akun (UUID/Password protocol-aware; URL build hanya di ekspor .txt; sukses Beli/Trial tanpa URL) ✅**; v1.37: **renew paid-only + idempotence (FindInFlight) + debit-first auto-refund ✅**; v1.38: **fix renew panel "empty client ID" — spec penuh client dipertahankan, PanelClientKey per-protocol ✅**; v1.39: **adjust saldo admin + idempotence confirm ✅**; v1.40: **manajemen server + statistik + audit log admin (FR-11 lengkap) ✅**; v1.41: **notifikasi order sukses ke grup admin (FR-04 AC) ✅**; v1.42: **UX keyboard zigzag 2-1-2-1 semua sub-menu (packRows di menu_rows.go) ✅**; v1.43: **brand KENTANG TECH di semua template notifikasi/pesan transaksi (banner 🏪 pengecualian icon policy) ✅**; v1.44: **konsistensi brand ditutup — ringkasan konfirmasi + pesan gagal ber-brand, ejaan diseragamkan (txt/home/info pakai BrandName) ✅**; v1.45: **worker health check panel (PRD §17 — server mati tidak dijual, ListBuyable filter health_status=down) + worker trial cleanup (disable akun trial expired di panel lalu tandai is_expired) ✅**; v1.46: **FR-13 subscription URL ✅ (sub_id dipersist migrasi 000006 + subscription_url/json di Ekspor .txt — Opsi 2 domain sama panel port beda; URL hanya di ekspor, akun lama tanpa backfill)**) |
 
 > **M6 status (v1.21)**: **Trial (FR-07) ✅** — `service/trial` (daily limit
 > 2x/hari via Redis counter TTL s.d. tengah malam, claim anti-race + rollback),

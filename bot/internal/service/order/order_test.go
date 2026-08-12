@@ -185,6 +185,52 @@ func TestRenew_GivenOwnedClient_ThenExpiryExtendedFromRemaining(t *testing.T) {
 	}
 }
 
+func TestPurchase_GivenSubLinks_ThenClientRowCarriesSubscriptionURLs(t *testing.T) {
+	plan := &domain.VpnPlan{CountryCode: "ID", CountryName: "Indonesia", Days: 30, Price: 7000}
+	user := &postgres.User{ID: 1, Balance: 50000}
+	store := newFakeStores()
+	store.plans.plan = plan
+	store.servers.serverID = 5
+	store.panels.created = domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless", SubID: "sub-abc"}
+	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
+	svc.SetSubLinks(SubLinks{BaseURL: "https://p.example.com:2096", LinkPath: "/sub", JSONPath: "/json"})
+
+	if _, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless"); err != nil {
+		t.Fatalf("Purchase: %v", err)
+	}
+	if len(store.clients.created) != 1 {
+		t.Fatalf("clients = %d, want 1", len(store.clients.created))
+	}
+	row := store.clients.created[0]
+	if row.SubID != "sub-abc" {
+		t.Errorf("SubID = %q, want sub-abc", row.SubID)
+	}
+	if want := "https://p.example.com:2096/sub/sub-abc"; row.SubscriptionURL != want {
+		t.Errorf("SubscriptionURL = %q, want %q", row.SubscriptionURL, want)
+	}
+	if want := "https://p.example.com:2096/json/sub-abc"; row.SubscriptionJSONURL != want {
+		t.Errorf("SubscriptionJSONURL = %q, want %q", row.SubscriptionJSONURL, want)
+	}
+}
+
+func TestSubLinks_GivenEmptyOrTrailingSlash_ThenCanonicalURLs(t *testing.T) {
+	var empty SubLinks
+	if got := empty.URL("x"); got != "" {
+		t.Errorf("URL() with empty config = %q, want empty", got)
+	}
+	if got := empty.JSONURL("x"); got != "" {
+		t.Errorf("JSONURL() with empty config = %q, want empty", got)
+	}
+	// Base/path with trailing slashes must join canonically.
+	l := SubLinks{BaseURL: "https://h:2096/", LinkPath: "/sub/", JSONPath: "/json"}
+	if got := l.URL("sid1"); got != "https://h:2096/sub/sid1" {
+		t.Errorf("URL join = %q, want https://h:2096/sub/sid1", got)
+	}
+	if got := l.JSONURL("sid1"); got != "https://h:2096/json/sid1" {
+		t.Errorf("JSONURL join = %q, want https://h:2096/json/sid1", got)
+	}
+}
+
 func TestRenew_GivenForeignClient_ThenErrClientNotFound(t *testing.T) {
 	user := &postgres.User{ID: 1, Balance: 50000}
 	store := newFakeStores()

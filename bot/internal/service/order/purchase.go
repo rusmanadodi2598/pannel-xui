@@ -104,6 +104,10 @@ func (s *Service) Purchase(ctx context.Context, user *postgres.User, country str
 	client.ConfigLink = pc.ConfigLink
 	client.InboundNetwork = pc.InboundNetwork
 	client.InboundPath = pc.InboundPath
+	// FR-13: persist subId + subscription URLs (only the .txt export ships them).
+	client.SubID = pc.SubID
+	client.SubscriptionURL = s.subLinks.URL(pc.SubID)
+	client.SubscriptionJSONURL = s.subLinks.JSONURL(pc.SubID)
 	row := toClientRow(client)
 	if err := s.clients.Create(ctx, row); err != nil {
 		// Panel provisioned but the DB record failed — no money taken yet; the

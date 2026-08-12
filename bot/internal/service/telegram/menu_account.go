@@ -147,10 +147,20 @@ func AccountTXTContent(c postgres.ClientView, now time.Time) string {
 	} else {
 		b.WriteString("Config Link : belum tersedia\n")
 	}
+	// FR-13 (v1.46): subscription URLs — standard (auto-update) + JSON/Clash.
+	// Shown ONLY in this export, consistent with the URL-in-export policy;
+	// legacy accounts (sebelum FR-13) punya kolom kosong dan dilewati.
+	if strings.TrimSpace(c.SubscriptionURL) != "" {
+		b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		b.WriteString("Subscription URL (auto-update):\n" + c.SubscriptionURL + "\n")
+		if strings.TrimSpace(c.SubscriptionJSONURL) != "" {
+			b.WriteString("Subscription JSON (Clash/Meta):\n" + c.SubscriptionJSONURL + "\n")
+		}
+	}
 	b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	b.WriteString("Cara pakai:\n")
-	b.WriteString("1. Install aplikasi VPN (v2rayNG / NekoBox / Hiddify).\n")
-	b.WriteString("2. Import Config Link dari file ini (paste / scan QR di aplikasi VPN).\n")
+	b.WriteString("1. Install aplikasi VPN (v2rayNG / NekoBox / Hiddify / Clash Meta).\n")
+	b.WriteString("2. Import Config Link atau Subscription URL dari file ini.\n")
 	b.WriteString("3. Aktifkan koneksi — selamat berselancar.\n")
 	b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	return b.String()
