@@ -1,22 +1,227 @@
-# X-UI
-**An Advanced Web Panel • Built on Xray Core**
+# X-UI — Kentang Tech Fork
 
-![](https://img.shields.io/github/v/release/alireza0/x-ui.svg)
-![](https://img.shields.io/docker/pulls/alireza7/x-ui.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/alireza0/x-ui)](https://goreportcard.com/report/github.com/alireza0/x-ui)
-[![Downloads](https://img.shields.io/github/downloads/alireza0/x-ui/total.svg)](https://img.shields.io/github/downloads/alireza0/x-ui/total.svg)
-[![License](https://img.shields.io/badge/license-GPL%20V3-blue.svg?longCache=true)](https://www.gnu.org/licenses/gpl-3.0.en.html)
+**An Advanced Web Panel • Built on Xray Core** — **fork** dari
+[`alireza0/x-ui`](https://github.com/alireza0/x-ui) dengan tambahan **Bot
+(Order)**: Telegram auto-order bot (Go, webhook-only) di direktori `/bot`.
 
-> **Disclaimer:** This project is only for personal learning and communication, please do not use it for illegal purposes, please do not use it in a production environment
+> **Disclaimer:** Project ini hanya untuk pembelajaran & komunikasi personal —
+> jangan digunakan untuk tujuan ilegal.
 
-**If you think this project is helpful to you, you may wish to give a**:star2: **or donate me a coffee:**
+**Struktur repo:**
 
-**Official Donation Page:** [https://donate.alireza0.dev/](https://donate.alireza0.dev/)
+| Direktori | Isi |
+|-----------|-----|
+| `/` | Panel X-UI (fork `alireza0/x-ui`): web panel, REST API, Xray Core, Bot Admin bawaan, subscription service |
+| `/bot` | **Bot (Order)** — Telegram bot auto-order (Go, PostgreSQL + Redis, webhook-only). Dokumentasi lengkap: [`bot/README.md`](bot/README.md) |
+| `/docs` | PRD & UAT checklist Bot (Order) |
 
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/alireza7)
-<a href="https://nowpayments.io/donation/alireza7" target="_blank" rel="noreferrer noopener">
-   <img src="https://nowpayments.io/images/embeds/donation-button-black.svg" alt="Crypto donation button by NOWPayments">
-</a>
+Dokumentasi upstream (API routes, install panel, env vars, dsb.) dipertahankan
+apa adanya di bawah.
+
+## Arsitektur (Skema)
+
+### Stack Overview
+
+```mermaid
+flowchart TB
+    subgraph TG["Telegram"]
+        U["Pelanggan"]
+        AD["Admin / Operator"]
+    end
+
+    subgraph BOT["Bot (Order) — /bot (Go, baru)"]
+        WH["Webhook POST /api/v1/webhooks/telegram"]
+        DISP["Dispatcher: ban → gate grup → rate-limit → route"]
+        SVC["Service: order · user · pricing · server · traffic · trial · expiry · admin · topup · health · trial-cleanup"]
+    end
+
+    subgraph PANEL["X-UI Panel (fork alireza0/x-ui)"]
+        WEB["Web Panel + REST API /xui/API/*"]
+        TGBOT["Bot Admin bawaan (tgbot)"]
+        SUB["Subscription service"]
+        XRAY["Xray Core"]
+    end
+
+    subgraph STORE["Datastore"]
+        PG[("PostgreSQL")]
+        RD[("Redis")]
+        SQLITE[("SQLite /etc/x-ui/x-ui.db")]
+    end
+
+    U -->|pesan / callback| WH
+    U -->|menu / notifikasi| TGBOT
+    AD -->|notifikasi order / admin| TGBOT
+    SVC -->|REST API: login · inbounds · addClient · updateClient · delClient · traffic · onlines · status| WEB
+    SVC --> PG
+    SVC --> RD
+    WEB --> SQLITE
+    TGBOT -.config.-> SQLITE
+    WEB --> XRAY
+    U -->|config link / subscription URL| SUB
+```
+
+### Skema X-UI Panel (fork)
+
+```mermaid
+flowchart LR
+    subgraph PANEL["X-UI Panel"]
+        WEB["Web UI (Vue) + Controller (Gin)"]
+        API["REST API /xui/API/*<br/>inbounds · outbounds · routing · server · client CRUD · traffic · onlines · status"]
+        TG["Bot Admin bawaan<br/>web/service/tgbot.go"]
+        SUB["Subscription service<br/>sub/"]
+        IP["IP Limit per client<br/>(nftables, Linux)"]
+        XRAY["Xray Core"]
+        DBX[("SQLite x-ui.db")]
+    end
+
+    API --> XRAY
+    API --> DBX
+    TG -.baca & backup.-> DBX
+    SUB --> DBX
+    XRAY --> IP
+```
+
+### Skema Bot Admin Bawaan (tgbot panel)
+
+Bot Telegram yang sudah tertanam di panel (dikonfigurasi lewat Web Panel:
+token, admin chat ID, cron notifikasi, backup, ambang CPU).
+
+```mermaid
+flowchart TB
+    TG["Bot Admin bawaan (web/service/tgbot.go)"]
+    subgraph FITUR["Fitur"]
+        N1["Laporan traffic berkala (cron)"]
+        N2["Notifikasi login panel"]
+        N3["Alert CPU load"]
+        N4["Peringatan kadaluarsa & kuota"]
+        N5["Info client by Telegram ID / username"]
+        N6["Laporan anonim by UUID / password"]
+        N7["Menu-based bot + client search (admin)"]
+        N8["Backup DB on request"]
+        N9["Cek inbound · status sistem · depleted client"]
+    end
+    TG --> N1
+    TG --> N2
+    TG --> N3
+    TG --> N4
+    TG --> N5
+    TG --> N6
+    TG --> N7
+    TG --> N8
+    TG --> N9
+```
+
+### Skema Bot (Order) — /bot (baru)
+
+```mermaid
+flowchart TB
+    subgraph TELE["Telegram"]
+        WH["POST /api/v1/webhooks/telegram"]
+    end
+
+    subgraph HTTP["handler/http"]
+        DEDUP["Dedup update_id (Redis SETNX 24 jam)"]
+        POOL["Worker pool bounded + per-user lock"]
+    end
+
+    subgraph DISP["handler/telegram — dispatcher"]
+        CHAIN["ban → gate grup (cache 6 jam) → rate-limit 30/mnt"]
+        ROUTE["route: shop · topup · trial · admin · account · history · help"]
+    end
+
+    subgraph SVC["service layer"]
+        ORD["order — beli/renew/trial · debit atomik + ledger"]
+        USR["user — saldo, ban"]
+        PRC["pricing — harga live dari DB"]
+        SRV["server — gateway multi-panel (kredensial terenkripsi)"]
+        TRF["traffic — sync + refresh manual"]
+        EXP["expiry — notifikasi H-7/H-3/H-1"]
+        ADM["admin — FR-11 (harga/server/saldo/statistik/audit)"]
+        TOP["topup — QRIS (stub, M5)"]
+        HLTH["health — server mati tidak dijual"]
+        TCL["trial-cleanup — disable trial expired"]
+    end
+
+    subgraph REPO["repository layer"]
+        PG[("PostgreSQL — users/orders/clients/servers/pricing/ledger")]
+        RD[("Redis — session panel, dedup, lock, FSM, counter")]
+        XUI["XUI client — REST API panel (login + session cache)"]
+    end
+
+    subgraph WRK["worker (IntervalWorker)"]
+        W1["expiry notify"]
+        W2["traffic sync"]
+        W3["health check"]
+        W4["trial cleanup"]
+    end
+
+    TELE --> HTTP --> DISP --> SVC
+    SVC --> REPO
+    WRK --> SVC
+    XUI -->|login + session cookie| API["REST /xui/API/* panel"]
+```
+
+## Install Bot (Order)
+
+Bot auto-order berada di `/bot` (modul Go mandiri — **tidak menyentuh** source,
+DB, maupun proses panel; komunikasi ke panel hanya lewat REST API).
+Dokumentasi lengkap: [`bot/README.md`](bot/README.md).
+
+### Prasyarat
+
+- **Go 1.26+** (toolchain sesuai `AGENTS.md`)
+- **PostgreSQL 16 + Redis** native di host (systemd `postgresql@16-main` di
+  `127.0.0.1:5432`, `redis-server` di `127.0.0.1:6379`)
+- Domain **HTTPS publik** untuk webhook Telegram (Nginx + TLS)
+- X-UI Panel yang bisa diakses bot (host + port panel, kredensial admin)
+
+### Langkah
+
+```bash
+# 1. Setup database & redis (sekali saja)
+sudo -u postgres psql -c "CREATE USER bot WITH PASSWORD 'bot';"
+sudo -u postgres psql -c 'CREATE DATABASE bot OWNER bot;'
+sudo -u postgres psql -c 'CREATE DATABASE bot_test OWNER bot;'
+sudo systemctl enable --now redis-server
+
+# 2. Konfigurasi
+cd bot
+cp .env.example .env
+# isi: BOT_TOKEN, BOT_DOMAIN (HTTPS), WEBHOOK_SECRET, DATABASE_URL, REDIS_URL,
+#      ENCRYPTION_KEY, ADMIN_IDS, NOTIFICATION_GROUP_ID, PANEL_1_* (panel X-UI)
+
+# 3. Build & uji
+ go build ./... && go vet ./...
+ go test -race ./...
+
+# 4. Jalankan (port default 8443)
+go run ./cmd/bot
+# atau binary: go build -o bot ./cmd/bot && ./bot
+```
+
+Webhook Telegram **terdaftar otomatis saat boot** (setWebhook + verifikasi).
+Health check: `curl http://127.0.0.1:8443/api/v1/health`.
+
+### TLS (Nginx) — syarat webhook Telegram
+
+Webhook Telegram hanya menerima HTTPS. Proxy Nginx → `127.0.0.1:8443`:
+
+```bash
+sudo certbot certonly --standalone -d bot-xui.kentangtechstore.com
+# mount certs ke ./certs (fullchain.pem + privkey.pem), sesuaikan nginx.conf
+```
+
+### Docker Compose (produksi)
+
+```bash
+cd bot
+docker compose up -d --build
+docker compose ps
+curl https://<BOT_DOMAIN>/health
+```
+
+> Compose menjalankan **bot + nginx** dengan `network_mode: host` — PostgreSQL &
+> Redis dipinjam dari service host (bukan container).
 
 ## Quick Overview
 | Features                               |      Enable?       |
