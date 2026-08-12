@@ -96,6 +96,12 @@ func TestLoad_InvalidValues(t *testing.T) {
 		{"invalid traffic sync interval", func(e map[string]string) { e["TRAFFIC_SYNC_INTERVAL_MIN"] = "0" }},
 		{"invalid traffic sync interval high", func(e map[string]string) { e["TRAFFIC_SYNC_INTERVAL_MIN"] = "61" }},
 		{"invalid traffic sync batch", func(e map[string]string) { e["TRAFFIC_SYNC_BATCH"] = "0" }},
+		{"invalid health check enabled", func(e map[string]string) { e["HEALTH_CHECK_ENABLED"] = "abc" }},
+		{"invalid health check interval", func(e map[string]string) { e["HEALTH_CHECK_INTERVAL_SEC"] = "0" }},
+		{"invalid health check interval high", func(e map[string]string) { e["HEALTH_CHECK_INTERVAL_SEC"] = "3601" }},
+		{"invalid trial cleanup enabled", func(e map[string]string) { e["TRIAL_CLEANUP_ENABLED"] = "abc" }},
+		{"invalid trial cleanup interval", func(e map[string]string) { e["TRIAL_CLEANUP_INTERVAL_MIN"] = "0" }},
+		{"invalid trial cleanup batch", func(e map[string]string) { e["TRIAL_CLEANUP_BATCH"] = "0" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,6 +182,14 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Errorf("traffic sync = %v/%v/%d, want true/5m/200",
 			cfg.TrafficSyncEnabled, cfg.TrafficSyncInterval, cfg.TrafficSyncBatch)
 	}
+	if !cfg.HealthCheckEnabled || cfg.HealthCheckInterval != 60*time.Second {
+		t.Errorf("health check = %v/%v, want true/60s",
+			cfg.HealthCheckEnabled, cfg.HealthCheckInterval)
+	}
+	if !cfg.TrialCleanupEnabled || cfg.TrialCleanupInterval != 15*time.Minute || cfg.TrialCleanupBatch != 50 {
+		t.Errorf("trial cleanup = %v/%v/%d, want true/15m/50",
+			cfg.TrialCleanupEnabled, cfg.TrialCleanupInterval, cfg.TrialCleanupBatch)
+	}
 }
 
 // validEnv returns a complete, valid environment for tests.
@@ -214,6 +228,11 @@ func validEnv() map[string]string {
 		"EXPIRY_NOTIFY_ENABLED":      "true",
 		"EXPIRY_NOTIFY_INTERVAL_MIN": "360",
 		"EXPIRY_NOTIFY_BATCH":        "50",
+		"HEALTH_CHECK_ENABLED":       "true",
+		"HEALTH_CHECK_INTERVAL_SEC":  "60",
+		"TRIAL_CLEANUP_ENABLED":      "true",
+		"TRIAL_CLEANUP_INTERVAL_MIN": "15",
+		"TRIAL_CLEANUP_BATCH":        "50",
 	}
 }
 

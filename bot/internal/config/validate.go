@@ -107,5 +107,11 @@ func (c *Config) validate() error {
 	if err := c.validateTrafficSync(); err != nil {
 		return err
 	}
+	if err := c.validateHealthCheck(); err != nil {
+		return err
+	}
+	if err := c.validateTrialCleanup(); err != nil {
+		return err
+	}
 	return nil
 }

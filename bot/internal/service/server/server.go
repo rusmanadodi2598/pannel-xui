@@ -26,10 +26,17 @@ import (
 )
 
 // Store is the server persistence seam (postgres.ServerRepo implements it).
+// Admin management ops (FR-11, v1.40) live on the same repo: list all panels,
+// flip sellable/active flags and create a new panel with a sealed password.
 type Store interface {
 	UpsertSeed(ctx context.Context, s postgres.VPNServer) error
 	ListBuyable(ctx context.Context) ([]postgres.ServerView, error)
 	GetByID(ctx context.Context, id int64) (*postgres.VPNServer, error)
+	ListAll(ctx context.Context) ([]postgres.ServerAdminView, error)
+	SetOpen(ctx context.Context, id int64, open bool) error
+	SetActive(ctx context.Context, id int64, active bool) error
+	Create(ctx context.Context, s *postgres.VPNServer) error
+	FindByHostPort(ctx context.Context, host string, port int, username string) (*postgres.VPNServer, error)
 }
 
 // SessionCache is the xui.SessionCache seam (Redis adapter in repository/redis).
@@ -44,11 +51,18 @@ type Service struct {
 	store Store
 	box   *crypto.SecretBox
 	cache SessionCache
+	// panelFactory builds the authenticated panel client; tests override it
+	// with a fake (same seam pattern as ordersvc.newID).
+	panelFactory func(ctx context.Context, serverID int64) (inboundLister, error)
 }
 
 // New builds the server service. cache may be nil (no session persistence).
 func New(store Store, box *crypto.SecretBox, cache SessionCache) *Service {
-	return &Service{store: store, box: box, cache: cache}
+	s := &Service{store: store, box: box, cache: cache}
+	s.panelFactory = func(ctx context.Context, serverID int64) (inboundLister, error) {
+		return s.PanelClient(ctx, serverID)
+	}
+	return s
 }
 
 // EnsureSeeded upserts every PANEL_N_* seed with its password encrypted
@@ -139,44 +153,32 @@ func (s *Service) PanelClient(ctx context.Context, serverID int64) (*xui.Client,
 }
 
 // CreateClient provisions a client on the panel for a purchase (FR-04).
+// inboundID > 0 pins the exact panel inbound (user picked server+protocol);
+// 0 falls back to the first enabled inbound matching the protocol.
 // The expiry is computed from days (trial uses hours — see CreateTrialClient).
-func (s *Service) CreateClient(ctx context.Context, serverID int64, email, protocol string, days int, trafficGB, ipLimit int64) (domain.PanelClient, error) {
+func (s *Service) CreateClient(ctx context.Context, serverID int64, inboundID int, email, protocol string, days int, trafficGB, ipLimit int64) (domain.PanelClient, error) {
 	expiry := time.Now().AddDate(0, 0, days).UnixMilli()
-	return s.provisionClient(ctx, serverID, email, protocol, trafficGB, ipLimit, expiry)
-}
-
-// RenewClient extends an existing client's expiry on the panel (FR-05).
-// The client's protocol (stored on the DB row) selects the target inbound.
-func (s *Service) RenewClient(ctx context.Context, serverID int64, clientID, email, protocol string, newExpiry time.Time) error {
-	client, err := s.PanelClient(ctx, serverID)
-	if err != nil {
-		return err
-	}
-	inbounds, err := client.GetInbounds(ctx)
-	if err != nil {
-		return fmt.Errorf("listing panel inbounds: %w", err)
-	}
-	inbound, ok := matchInbound(inbounds, protocol)
-	if !ok {
-		for i := range inbounds {
-			if inbounds[i].Enable && inbounds[i].Port > 0 {
-				inbound = inbounds[i]
-				ok = true
-				break
-			}
-		}
-	}
-	if !ok {
-		return fmt.Errorf("no enabled inbound on server %d", serverID)
-	}
-	spec := xui.ClientSpec{Email: email, Enable: true, ExpiryTime: newExpiry.UnixMilli()}
-	return client.UpdateClient(ctx, xui.UpdateClientPayload{InboundID: inbound.ID, ClientID: clientID, Client: spec})
+	return s.provisionClient(ctx, serverID, inboundID, email, protocol, trafficGB, ipLimit, expiry)
 }
 
 // matchInbound finds the first enabled inbound with the given protocol.
 func matchInbound(inbounds []xui.Inbound, protocol string) (xui.Inbound, bool) {
 	for _, in := range inbounds {
 		if in.Enable && in.Port > 0 && strings.EqualFold(in.Protocol, protocol) {
+			return in, true
+		}
+	}
+	return xui.Inbound{}, false
+}
+
+// matchInboundByID finds an inbound by its panel id (0 → not found). Used when
+// the user picked an exact inbound in the buy flow (FR-03).
+func matchInboundByID(inbounds []xui.Inbound, id int) (xui.Inbound, bool) {
+	if id <= 0 {
+		return xui.Inbound{}, false
+	}
+	for _, in := range inbounds {
+		if in.ID == id && in.Enable {
 			return in, true
 		}
 	}

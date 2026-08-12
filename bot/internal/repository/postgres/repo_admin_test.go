@@ -1,108 +1,136 @@
-// Package postgres_test also covers the FR-11 admin repository operations.
+// Package postgres_test covers the FR-11 admin persistence (v1.40).
 //
 // @file      internal/repository/postgres/repo_admin_test.go
-// @for       Integration tests: pricing admin ops + user ban/list/count (FR-11).
-// @uses      testing, context, time, github.com/kentangtech/bot-order/internal/domain,
-// github.com/kentangtech/bot-order/internal/repository/postgres
-// @reason    Verifies the FR-11 persistence contract on the staging DB.
+// @for       Integration: audit log append/recent, server admin ops, order stats.
+// @uses      testing, context, time, internal/domain, internal/repository/postgres
+// @reason    The admin trail + server flags + dashboard aggregates must behave
+// exactly against PostgreSQL (AGENTS.md §2.1, §1.7).
 // @author    Dodi Rusmana <rusmanadodi@kentangtechstore.com>
 // @layer     repository
 // @stability stable
-// @since     2026-08-11
+// @since     2026-08-12
 package postgres_test
 
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 )
 
-func TestPricingRepo_AdminOps_GivenPlans_ThenListGetSetPriceSetEnabled(t *testing.T) {
-	r := openRepo(t)
-	cleanTables(t)
+func TestAuditRepo_GivenRecords_ThenRecentNewestFirst(t *testing.T) {
+	repo := openRepo(t)
 	ctx := context.Background()
+	if err := repo.DB().Exec(`TRUNCATE admin_audit_log RESTART IDENTITY CASCADE`).Error; err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	r := repo.Audit()
 
-	rows := []postgres.Pricing{
-		{CountryCode: "ID", PlanDays: 15, Price: 4000, Enabled: true},
-		{CountryCode: "ID", PlanDays: 30, Price: 7000, Enabled: true},
+	for i := 0; i < 3; i++ {
+		if err := r.Record(ctx, 7, "price:set", "ID:30", "7000"); err != nil {
+			t.Fatalf("Record %d: %v", i, err)
+		}
 	}
-	if err := r.Pricing().UpsertMany(ctx, rows); err != nil {
-		t.Fatalf("UpsertMany: %v", err)
+	rows, err := r.Recent(ctx, 10)
+	if err != nil {
+		t.Fatalf("Recent: %v", err)
 	}
-
-	// Disable via the admin path (GORM omits Enabled:false on INSERT because
-	// of the default:true tag — the toggle uses UPDATE, which is correct).
-	if err := r.Pricing().SetEnabled(ctx, "ID", 30, false); err != nil {
-		t.Fatalf("SetEnabled(false): %v", err)
-	}
-
-	// ListAll includes disabled plans.
-	all, err := r.Pricing().ListAll(ctx)
-	if err != nil || len(all) != 2 {
-		t.Fatalf("ListAll = %d, err %v", len(all), err)
-	}
-
-	// Get returns the disabled plan too (admin detail).
-	p, err := r.Pricing().Get(ctx, "ID", 30)
-	if err != nil || p.Enabled {
-		t.Fatalf("Get(ID,30) = %+v, err %v (want disabled row)", p, err)
-	}
-
-	// SetPrice + SetEnabled persist.
-	if err := r.Pricing().SetPrice(ctx, "ID", 30, 7500); err != nil {
-		t.Fatalf("SetPrice: %v", err)
-	}
-	if err := r.Pricing().SetEnabled(ctx, "ID", 30, true); err != nil {
-		t.Fatalf("SetEnabled: %v", err)
-	}
-	p, err = r.Pricing().Get(ctx, "ID", 30)
-	if err != nil || p.Price != 7500 || !p.Enabled {
-		t.Fatalf("after update = %+v, err %v", p, err)
-	}
-
-	// Missing plan → ErrPlanNotFound.
-	if err := r.Pricing().SetPrice(ctx, "XX", 99, 100); err != postgres.ErrPlanNotFound {
-		t.Fatalf("SetPrice missing = %v, want ErrPlanNotFound", err)
+	if len(rows) != 3 || rows[0].Action != "price:set" || rows[0].AdminID != 7 {
+		t.Errorf("Recent = %+v, want 3 rows newest first", rows)
 	}
 }
 
-func TestUserRepo_AdminOps_GivenUsers_ThenSetBannedAndListAndCount(t *testing.T) {
-	r := openRepo(t)
-	cleanTables(t)
+func TestServerRepo_GivenAdminOps_ThenFlagsAndCreateWork(t *testing.T) {
+	repo := openRepo(t)
+	r := repo.Servers()
 	ctx := context.Background()
 
-	u1, _ := r.User().FindOrCreate(ctx, 991001, "admin_a", "A")
-	u2, _ := r.User().FindOrCreate(ctx, 991002, "admin_b", "B")
-	_ = u2
+	seed := postgres.VPNServer{
+		Name: "ADM-01", Host: "adm.example.com", Port: 2083, Username: "admin",
+		PasswordEnc: "enc", APIPath: "/panel", UseSSL: true,
+		CountryCode: "ID", FlagEmoji: "🇮🇩", Protocols: `["vless"]`,
+		IsActive: true, IsOpen: true,
+	}
+	if err := r.UpsertSeed(ctx, seed); err != nil {
+		t.Fatalf("UpsertSeed: %v", err)
+	}
+	all, err := r.ListAll(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("ListAll = %+v, err %v", all, err)
+	}
+	id := all[0].ID
 
-	if n, err := r.User().CountUsers(ctx); err != nil || n != 2 {
-		t.Fatalf("CountUsers = %d, err %v", n, err)
+	if err := r.SetOpen(ctx, id, false); err != nil {
+		t.Fatalf("SetOpen: %v", err)
+	}
+	if err := r.SetActive(ctx, id, false); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	after, err := r.ListAll(ctx)
+	if err != nil || after[0].IsOpen || after[0].IsActive {
+		t.Errorf("after toggles = %+v, want both false", after)
+	}
+	// Toggling an unknown id → ErrServerNotFound.
+	if err := r.SetOpen(ctx, 99999, true); err != postgres.ErrServerNotFound {
+		t.Errorf("SetOpen unknown = %v, want ErrServerNotFound", err)
 	}
 
-	ids, err := r.User().ListTelegramIDs(ctx, 1, 0)
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("ListTelegramIDs page = %v, err %v", ids, err)
+	// Create a brand-new row; password stays encrypted as given.
+	created := &postgres.VPNServer{
+		Name: "ADM-02", Host: "adm2.example.com", Port: 8443, Username: "root",
+		PasswordEnc: "sealed", APIPath: "/", UseSSL: true,
+		CountryCode: "SG", IsActive: true, IsOpen: true,
 	}
-	ids2, err := r.User().ListTelegramIDs(ctx, 1, 1)
-	if err != nil || len(ids2) != 1 || ids[0] == ids2[0] {
-		t.Fatalf("paging unstable: %v then %v", ids, ids2)
+	if err := r.Create(ctx, created); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.ID == 0 {
+		t.Error("created id = 0")
+	}
+	dup, err := r.FindByHostPort(ctx, "adm2.example.com", 8443, "root")
+	if err != nil || dup == nil || dup.ID != created.ID {
+		t.Errorf("FindByHostPort = %+v, err %v", dup, err)
+	}
+}
+
+func TestOrderRepo_GivenOrders_ThenStatsAggregate(t *testing.T) {
+	repo := openRepo(t)
+	ctx := context.Background()
+	userRepo := repo.User()
+	u, err := userRepo.FindOrCreate(ctx, 424242, "stats-user", "Stats")
+	if err != nil {
+		t.Fatalf("FindOrCreate: %v", err)
+	}
+	orderRepo := repo.Orders()
+	mk := func(id, status string) postgres.Order {
+		return postgres.Order{
+			OrderID: id, OrderType: string(domain.OrderTypePurchase),
+			UserID: u.ID, Status: status, FinalAmount: 7000,
+		}
+	}
+	o1 := mk("KTS-STATS001-VPN", string(domain.OrderCompleted))
+	o2 := mk("KTS-STATS002-VPN", string(domain.OrderFailed))
+	if err := orderRepo.Create(ctx, &o1); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := orderRepo.Create(ctx, &o2); err != nil {
+		t.Fatalf("Create 2: %v", err)
 	}
 
-	if err := r.User().SetBanned(ctx, u1.TelegramID, true); err != nil {
-		t.Fatalf("SetBanned: %v", err)
+	stats, err := orderRepo.Stats(ctx, time.Local)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
 	}
-	got, err := r.User().GetByTelegramID(ctx, u1.TelegramID)
-	if err != nil || !got.IsBanned {
-		t.Fatalf("banned flag = %+v, err %v", got, err)
+	if stats.TotalOrders < 2 || stats.Completed < 1 || stats.Failed < 1 {
+		t.Errorf("stats = %+v, want >=2 orders with >=1 completed + >=1 failed", stats)
 	}
-	if err := r.User().SetBanned(ctx, 999999, true); err == nil {
-		t.Error("SetBanned on unknown user must error (RowsAffected 0)")
+	if stats.TotalRevenue < 7000 {
+		t.Errorf("revenue = %d, want >= 7000", stats.TotalRevenue)
 	}
-
-	// Debit guard honors the flag: banned user cannot be charged.
-	if _, err := r.User().Debit(ctx, u1.ID, domain.Money(100), "KTS-ADM001-VPN"); err == nil {
-		t.Error("debit on banned user must fail (guard)")
+	recent, err := orderRepo.RecentOrders(ctx, 5)
+	if err != nil || len(recent) == 0 {
+		t.Fatalf("RecentOrders = %+v, err %v", recent, err)
 	}
 }

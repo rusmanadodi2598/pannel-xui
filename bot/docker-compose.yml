@@ -1,33 +1,33 @@
-# Bot Auto-Order stack (PRD §19) — bot + Nginx (TLS) + PostgreSQL + Redis.
-# Postgres/Redis dapat dipindah ke host terkelola: hapus service-nya dan
-# sesuaikan DATABASE_URL / REDIS_URL di .env.
+# Bot Auto-Order stack (PRD §19) — bot + Nginx (TLS).
+# PostgreSQL + Redis DIPINJAM dari HOST (service native systemd:
+# postgresql@16-main di :5432, redis-server di :6379) — TIDAK ada container
+# DB sendiri di stack ini. Karena PG/Redis host hanya bind 127.0.0.1, bot dan
+# nginx memakai network_mode: host (bukan bridge) agar bisa langsung mencapai
+# loopback host. Konsekuensi yang wajib diketahui operator:
+#   - DATABASE_URL / REDIS_URL memakai 127.0.0.1 (bukan nama service compose).
+#   - Port bot (WEBHOOK_PORT, default 8443) dan nginx (80/443) bind LANGSUNG
+#     di host — pastikan bebas sebelum `up`.
+#   - Staging saat ini menjalankan bot langsung di host (mis. /tmp/bot-staging
+#     di :8443): stop proses tersebut dulu agar port tidak bentrok.
 name: bot-order
 
 services:
   bot:
     build: .
+    network_mode: host        # tembus PG/Redis host di 127.0.0.1
     env_file:
       - path: .env
         required: false   # wajib diisi saat runtime; bot fail-fast jika kosong
     environment:
-      # Override ke service compose; menang atas env_file.
-      DATABASE_URL: postgres://bot:bot@postgres:5432/bot?sslmode=disable
-      REDIS_URL: redis://redis:6379/3
-    expose:
-      - "8443"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      # Service host-native (staging): postgresql@16-main + redis-server.
+      # Nilai di bawah menang atas env_file.
+      DATABASE_URL: postgres://bot:bot@127.0.0.1:5432/bot?sslmode=disable
+      REDIS_URL: redis://127.0.0.1:6379/3
     restart: unless-stopped
-    networks: [botnet]
 
   nginx:
     image: nginx:1.27-alpine
-    ports:
-      - "80:80"
-      - "443:443"
+    network_mode: host        # TLS 80/443 bind langsung di host
     environment:
       BOT_DOMAIN: ${BOT_DOMAIN:?set BOT_DOMAIN in .env}
     volumes:
@@ -42,40 +42,3 @@ services:
     depends_on:
       - bot
     restart: unless-stopped
-    networks: [botnet]
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: bot
-      POSTGRES_PASSWORD: bot
-      POSTGRES_DB: bot
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bot -d bot"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks: [botnet]
-
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks: [botnet]
-
-volumes:
-  pgdata:
-  redisdata:
-
-networks:
-  botnet:

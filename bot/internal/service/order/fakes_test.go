@@ -19,15 +19,16 @@ import (
 )
 
 type fakeStores struct {
-	orders          *fakeOrderStore
-	clients         *fakeClientStore
-	users           *fakeUserStore
-	plans           *fakePlanReader
-	servers         *fakeServerPicker
-	panels          *fakePanelGateway
-	debited         int
-	debitAfterPanel bool
-	saved           []*postgres.Order
+	orders           *fakeOrderStore
+	clients          *fakeClientStore
+	users            *fakeUserStore
+	plans            *fakePlanReader
+	servers          *fakeServerPicker
+	panels           *fakePanelGateway
+	debited          int
+	debitAfterPanel  bool // purchase: debit runs after the panel call (FR-04 AC-1)
+	debitBeforePanel bool // renewal v1.37: debit runs before the panel call
+	saved            []*postgres.Order
 }
 
 func newFakeStores() *fakeStores {
@@ -38,18 +39,21 @@ func newFakeStores() *fakeStores {
 	f.plans = &fakePlanReader{}
 	f.servers = &fakeServerPicker{}
 	f.panels = &fakePanelGateway{}
-	// Record debit ordering: debit must happen AFTER the panel call (FR-04 AC-1).
+	// Record debit ordering per flow: purchase debits AFTER the panel call
+	// (FR-04 AC-1); renewal debits BEFORE it (v1.37 debit-first).
 	f.users.onDebit = func() {
 		f.debited++
 		f.debitAfterPanel = f.panels.called
+		f.debitBeforePanel = !f.panels.called
 	}
 	f.orders.onSave = func(o *postgres.Order) { f.saved = append(f.saved, o) }
 	return f
 }
 
 type fakeOrderStore struct {
-	created []*postgres.Order
-	onSave  func(o *postgres.Order)
+	created  []*postgres.Order
+	onSave   func(o *postgres.Order)
+	inFlight *postgres.Order // returned by FindInFlight (nil = none in flight)
 }
 
 func (f *fakeOrderStore) Create(_ context.Context, o *postgres.Order) error {
@@ -63,12 +67,16 @@ func (f *fakeOrderStore) Save(_ context.Context, o *postgres.Order) error {
 	}
 	return nil
 }
+func (f *fakeOrderStore) FindInFlight(_ context.Context, _ int64, _ string) (*postgres.Order, error) {
+	return f.inFlight, nil
+}
 
 type fakeClientStore struct {
 	owned         *postgres.VPNClient
 	ownedErr      error
 	created       []*postgres.VPNClient
 	expiryUpdated *time.Time
+	expiryErr     error
 }
 
 func (f *fakeClientStore) Create(_ context.Context, c *postgres.VPNClient) error {
@@ -83,6 +91,9 @@ func (f *fakeClientStore) GetOwned(_ context.Context, _, _ int64) (*postgres.VPN
 	return f.owned, nil
 }
 func (f *fakeClientStore) UpdateExpiry(_ context.Context, _ int64, e time.Time, _ *int64) error {
+	if f.expiryErr != nil {
+		return f.expiryErr
+	}
 	f.expiryUpdated = &e
 	return nil
 }
@@ -90,7 +101,9 @@ func (f *fakeClientStore) UpdateExpiry(_ context.Context, _ int64, e time.Time, 
 type fakeUserStore struct {
 	balanceAfter domain.Money
 	debitErr     error
+	creditErr    error
 	onDebit      func() // called when Debit runs (ordering assertion)
+	credited     []string
 }
 
 func (f *fakeUserStore) Debit(_ context.Context, _ int64, _ domain.Money, _ string) (domain.Money, error) {
@@ -101,6 +114,13 @@ func (f *fakeUserStore) Debit(_ context.Context, _ int64, _ domain.Money, _ stri
 	if f.onDebit != nil {
 		f.onDebit()
 	}
+	return f.balanceAfter, nil
+}
+func (f *fakeUserStore) Credit(_ context.Context, _ int64, _ domain.Money, orderID string) (domain.Money, error) {
+	if f.creditErr != nil {
+		return 0, f.creditErr
+	}
+	f.credited = append(f.credited, orderID)
 	return f.balanceAfter, nil
 }
 
@@ -129,30 +149,34 @@ func (f *fakeServerPicker) PickForCountry(_ context.Context, _ string) (int64, e
 }
 
 type fakePanelGateway struct {
-	called      bool
-	trialCalled bool
-	created     domain.PanelClient
-	createErr   error
-	renewCalled bool
-	renewErr    error
+	called         bool
+	trialCalled    bool
+	trialInboundID int
+	created        domain.PanelClient
+	createErr      error
+	renewCalled    bool
+	renewErr       error
+	renewClientID  string // panel client key passed to RenewClient (v1.38)
 }
 
-func (f *fakePanelGateway) CreateClient(_ context.Context, _ int64, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
+func (f *fakePanelGateway) CreateClient(_ context.Context, _ int64, _ int, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
 	f.called = true
 	if f.createErr != nil {
 		return domain.PanelClient{}, f.createErr
 	}
 	return f.created, nil
 }
-func (f *fakePanelGateway) CreateTrialClient(_ context.Context, _ int64, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
+func (f *fakePanelGateway) CreateTrialClient(_ context.Context, _ int64, inboundID int, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
 	f.trialCalled = true
+	f.trialInboundID = inboundID
 	if f.createErr != nil {
 		return domain.PanelClient{}, f.createErr
 	}
 	return f.created, nil
 }
-func (f *fakePanelGateway) RenewClient(_ context.Context, _ int64, _ string, _ string, _ string, _ time.Time) error {
+func (f *fakePanelGateway) RenewClient(_ context.Context, _ int64, clientID, _, _ string, _ time.Time) error {
 	f.renewCalled = true
+	f.renewClientID = clientID
 	if f.renewErr != nil {
 		return f.renewErr
 	}

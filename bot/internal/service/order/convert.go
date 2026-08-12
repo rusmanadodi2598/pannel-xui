@@ -34,16 +34,25 @@ func toOrderRow(o *domain.Order) *postgres.Order {
 }
 
 // toClientRow converts the domain client to the postgres row.
+// ConfigLink is mapped so the share URI survives restarts (M7 detail/export).
 func toClientRow(c *domain.VPNClient) *postgres.VPNClient {
 	return &postgres.VPNClient{
 		UserID: c.UserID, ServerID: c.ServerID, InboundID: c.InboundID,
 		Email: c.Email, UUID: c.UUID, Password: c.Password, Protocol: c.Protocol,
 		TrafficLimit: c.TrafficLimit, IPLimit: c.IPLimit, IsActive: true,
-		IsTrial: c.IsTrial, ExpiresAt: c.ExpiresAt,
+		IsTrial: c.IsTrial, ExpiresAt: c.ExpiresAt, ConfigLink: c.ConfigLink,
+		InboundNetwork: c.InboundNetwork, InboundPath: c.InboundPath,
 	}
 }
 
-func ptr64(v int64) *int64                  { return &v }
+// ptr64 maps a zero value to NULL (client_id/server_id are set only after the
+// related row exists — e.g. ClientID 0 before the client record is created).
+func ptr64(v int64) *int64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
 func ptrMoney(v domain.Money) *domain.Money { return &v }
 
 // trafficGB returns the default traffic quota in GB (FR-03; configurable later).

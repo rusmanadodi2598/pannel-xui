@@ -11,6 +11,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -89,6 +90,18 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, par
 		ReplyMarkup: markup,
 	}); err != nil {
 		return fmt.Errorf("telegram sendMessage: %w", err)
+	}
+	return nil
+}
+
+// SendDocument uploads a file (e.g. the exported account .txt, M7 feature).
+func (c *Client) SendDocument(ctx context.Context, chatID int64, filename string, content []byte, caption string) error {
+	if _, err := c.b.SendDocument(ctx, &bot.SendDocumentParams{
+		ChatID:   chatID,
+		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(content)},
+		Caption:  caption,
+	}); err != nil {
+		return fmt.Errorf("telegram sendDocument: %w", err)
 	}
 	return nil
 }

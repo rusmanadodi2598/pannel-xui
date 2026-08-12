@@ -29,6 +29,7 @@ type fakeAPI struct {
 	sent     []sendCall
 	edited   []editCall
 	answered []string
+	docs     []sendDocCall
 }
 
 type sendCall struct {
@@ -44,6 +45,13 @@ type editCall struct {
 	markup    models.ReplyMarkup
 }
 
+type sendDocCall struct {
+	chatID   int64
+	filename string
+	content  []byte
+	caption  string
+}
+
 func (f *fakeAPI) SendMessage(_ context.Context, chatID int64, text string, _ models.ParseMode, markup models.ReplyMarkup) error {
 	f.sent = append(f.sent, sendCall{chatID: chatID, text: text, markup: markup})
 	return nil
@@ -56,6 +64,11 @@ func (f *fakeAPI) EditMessageText(_ context.Context, chatID int64, messageID int
 
 func (f *fakeAPI) AnswerCallbackQuery(_ context.Context, callbackID, text string) error {
 	f.answered = append(f.answered, callbackID+":"+text)
+	return nil
+}
+
+func (f *fakeAPI) SendDocument(_ context.Context, chatID int64, filename string, content []byte, caption string) error {
+	f.docs = append(f.docs, sendDocCall{chatID: chatID, filename: filename, content: content, caption: caption})
 	return nil
 }
 

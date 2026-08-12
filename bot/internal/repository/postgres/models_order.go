@@ -20,7 +20,7 @@ import (
 type Order struct {
 	ID            int64        `gorm:"primaryKey"`
 	OrderID       string       `gorm:"uniqueIndex;not null"` // KTS-XXXXXXXX-VPN
-	OrderType     string       `gorm:"type:text;not null"`
+	OrderType     string       `gorm:"type:text;not null"`   // purchase|renewal|topup|trial|deletion
 	UserID        int64        `gorm:"index:idx_orders_user_id;not null"`
 	ServerID      *int64       `gorm:"index"`
 	ClientID      *int64       `gorm:"index"`

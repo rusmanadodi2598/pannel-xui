@@ -79,6 +79,24 @@ func TestCreateTrial_GivenPanelFailure_ThenFailedNoClient(t *testing.T) {
 	}
 }
 
+func TestCreateTrial_GivenPinnedInbound_ThenProvisionedOnIt(t *testing.T) {
+	f := newTrialStore()
+	svc := New(f.orders, f.clients, f.users, f.plans, f.servers, f.panels)
+
+	user := &postgres.User{ID: 9, Balance: 50000}
+	_, err := svc.CreateTrial(context.Background(), user, 3,
+		TrialSpec{Hours: 1, TrafficGB: 1, IPLimit: 1, InboundID: 7, Protocol: "trojan"})
+	if err != nil {
+		t.Fatalf("CreateTrial: %v", err)
+	}
+	if f.panels.trialInboundID != 7 {
+		t.Errorf("trial inbound = %d, want 7 (pinned)", f.panels.trialInboundID)
+	}
+	if got := f.orders.created[0].Protocol; got != "trojan" {
+		t.Errorf("order protocol = %q, want trojan", got)
+	}
+}
+
 func TestCreateTrial_GivenCompleted_ThenNewExpiryAboutOneHour(t *testing.T) {
 	f := newTrialStore()
 	svc := New(f.orders, f.clients, f.users, f.plans, f.servers, f.panels)

@@ -20,6 +20,7 @@ import (
 	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 	ordersvc "github.com/kentangtech/bot-order/internal/service/order"
+	serversvc "github.com/kentangtech/bot-order/internal/service/server"
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
 )
 
@@ -31,9 +32,14 @@ func TestBuyFlow_GivenCountryToConfirm_ThenOrderExecuted(t *testing.T) {
 	}
 	shop.plans.get = &domain.VpnPlan{CountryCode: "ID", CountryName: "Indonesia", Days: 30, Price: 7000}
 	shop.servers.list = []postgres.ServerView{{ID: 1, CountryCode: "ID", Name: "ID-01"}}
+	shop.servers.inbounds = []serversvc.InboundOption{
+		{ServerID: 1, ServerName: "ID-01", Country: "ID", InboundID: 4, Protocol: "vless", Remark: "reality"},
+		{ServerID: 1, ServerName: "ID-01", Country: "ID", InboundID: 5, Protocol: "trojan", Remark: "ws"},
+	}
 	shop.orders.res = &ordersvc.PurchaseResult{
 		OrderID: "KTS-TEST0001-VPN", Status: domain.OrderCompleted,
 		AccountEmail: "ktsx@vpn.kt", BalanceAfter: 43000, Plan: shop.plans.get,
+		ClientID: 3,
 	}
 
 	api := &fakeAPI{}
@@ -46,29 +52,49 @@ func TestBuyFlow_GivenCountryToConfirm_ThenOrderExecuted(t *testing.T) {
 	}
 	assertButton(t, api.edited[0], "buy:country:ID")
 
-	// Step 2: pick country → plan list.
+	// Step 2: pick country → inbound (server + protocol) picker from the panel.
 	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyCountry+"ID"))
-	if len(api.edited) != 2 || !strings.Contains(api.edited[1].text, "Indonesia") {
+	if len(api.edited) != 2 || !strings.Contains(api.edited[1].text, "protocol") {
 		t.Fatalf("step2 edited = %+v", api.edited)
 	}
-	assertButton(t, api.edited[1], "buy:plan:ID:15")
+	assertButton(t, api.edited[1], "buy:inbound:1:4:ID")
+	assertButton(t, api.edited[1], "buy:inbound:1:5:ID")
 
-	// Step 3: pick plan → confirm summary (live price + balance).
-	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyPlan+"ID:30"))
-	if len(api.edited) != 3 || !strings.Contains(api.edited[2].text, "Rp 7.000") {
+	// Step 3: pick inbound → plan list (server+inbound pinned in callbacks).
+	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyInbound+"1:4:ID"))
+	if len(api.edited) != 3 || !strings.Contains(api.edited[2].text, "Indonesia") {
 		t.Fatalf("step3 edited = %+v", api.edited)
 	}
-	assertButton(t, api.edited[2], "buy:confirm:ID:30")
+	assertButton(t, api.edited[2], "buy:plan:1:4:ID:15")
 
-	// Step 4: confirm → order executed, success message sent.
-	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyConfirm+"ID:30"))
+	// Step 4: pick plan → confirm summary (live price + balance + protocol).
+	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyPlan+"1:4:ID:30"))
+	if len(api.edited) != 4 || !strings.Contains(api.edited[3].text, "Rp 7.000") ||
+		!strings.Contains(api.edited[3].text, "VLESS") {
+		t.Fatalf("step4 edited = %+v", api.edited)
+	}
+	assertButton(t, api.edited[3], "buy:confirm:1:4:ID:30")
+
+	// Step 5: confirm → order executed with the pinned server+inbound+protocol.
+	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyConfirm+"1:4:ID:30"))
 	if len(api.sent) != 1 {
-		t.Fatalf("step4 sent = %+v", api.sent)
+		t.Fatalf("step5 sent = %+v", api.sent)
 	}
 	if !strings.Contains(api.sent[0].text, "Order Berhasil") || !strings.Contains(api.sent[0].text, "KTS-TEST0001-VPN") {
 		t.Errorf("success text = %q", api.sent[0].text)
 	}
-	if shop.orders.purchased == nil || shop.orders.purchased.Country != "ID" || shop.orders.purchased.Days != 30 {
+	// v1.36: the import URL no longer renders in the success message — it
+	// lives only in the .txt export (export button still offered).
+	if strings.Contains(api.sent[0].text, "vless://") {
+		t.Errorf("success text must not render the import URL (v1.36): %q", api.sent[0].text)
+	}
+	if !strings.Contains(api.sent[0].text, "Ekspor .txt") {
+		t.Errorf("success text missing export hint: %q", api.sent[0].text)
+	}
+	assertButtonInMarkup(t, api.sent[0].markup, telegramservice.PrefixAccountExport+"3")
+	if shop.orders.purchased == nil || shop.orders.purchased.Country != "ID" ||
+		shop.orders.purchased.Days != 30 || shop.orders.purchased.ServerID != 1 ||
+		shop.orders.purchased.Inbound != 4 || shop.orders.purchased.Protocol != "vless" {
 		t.Errorf("purchase call = %+v", shop.orders.purchased)
 	}
 }
@@ -77,11 +103,14 @@ func TestBuyFlow_GivenInsufficientBalance_ThenTopupHint(t *testing.T) {
 	shop := newFakeShop()
 	shop.plans.get = &domain.VpnPlan{CountryCode: "ID", CountryName: "Indonesia", Days: 30, Price: 7000}
 	shop.servers.list = []postgres.ServerView{{ID: 1, CountryCode: "ID"}}
+	shop.servers.inbounds = []serversvc.InboundOption{
+		{ServerID: 1, ServerName: "ID-01", Country: "ID", InboundID: 4, Protocol: "vless"},
+	}
 	shop.orders.err = ordersvc.ErrInsufficientBalance
 
 	api := &fakeAPI{}
 	d := dispatcherWithShop(api, shop)
-	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyConfirm+"ID:30"))
+	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixBuyConfirm+"1:4:ID:30"))
 
 	if len(api.sent) != 1 || !strings.Contains(api.sent[0].text, "tidak cukup") {
 		t.Fatalf("sent = %+v", api.sent)
@@ -135,6 +164,7 @@ func TestAccountMenu_GivenClients_ThenListRendered(t *testing.T) {
 		VPNClient:  postgres.VPNClient{ID: 3, Email: "a@vpn.kt", Protocol: "vless"},
 		ServerName: "ID-01", CountryCode: "ID", FlagEmoji: "🇮🇩",
 	}}
+	shop.clients.count = 1
 
 	api := &fakeAPI{}
 	d := dispatcherWithShop(api, shop)

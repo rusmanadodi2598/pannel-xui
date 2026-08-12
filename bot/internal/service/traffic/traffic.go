@@ -29,10 +29,12 @@ type Store interface {
 	SyncTrafficBatch(ctx context.Context, syncedAt time.Time, updates []postgres.TrafficUpdate) error
 }
 
-// Panel is the X-UI client surface used by the sweep (xui.Client implements it).
+// Panel is the X-UI client surface used by the sweep + the on-demand
+// per-client refresh (xui.Client implements it).
 type Panel interface {
 	GetInbounds(ctx context.Context) ([]xui.Inbound, error)
 	GetOnlineClients(ctx context.Context) ([]xui.OnlineUser, error)
+	GetClientTrafficByEmail(ctx context.Context, email string) (xui.ClientTraffic, error)
 }
 
 // PanelFactory builds an authenticated panel client for one server id.

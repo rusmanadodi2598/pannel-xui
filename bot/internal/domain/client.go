@@ -12,6 +12,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -38,6 +39,8 @@ type VPNClient struct {
 	ExpiresAt       *time.Time
 	ConfigLink      string
 	SubscriptionURL string
+	InboundNetwork  string // transport asli inbound (ws/grpc/…) — path dinamis v1.27
+	InboundPath     string // path asli (wsSettings.path / grpcSettings.serviceName)
 	LastOnline      *time.Time
 	CreatedAt       time.Time
 	ServerName      string
@@ -72,12 +75,19 @@ func NewVPNClient(userID, serverID int64, inboundID int, email, protocol, uuid, 
 
 // PanelClient is the result of a successful panel addClient (FR-04).
 // Shared by server & order services so no cross-service type coupling exists.
+// ConfigLink is the share URI (vless:// etc.) the bot builds itself because the
+// panel's sub server may be disabled (M7 detail/export feature). InboundNetwork
+// + InboundPath mirror the inbound's real transport (ws/grpc + path) so the
+// dual TLS/non-TLS config links use the actual path per inbound (v1.27).
 type PanelClient struct {
-	InboundID int
-	Email     string
-	UUID      string
-	Password  string
-	Protocol  string
+	InboundID      int
+	Email          string
+	UUID           string
+	Password       string
+	Protocol       string
+	ConfigLink     string
+	InboundNetwork string
+	InboundPath    string
 }
 
 // NewTrialClient builds a short-lived trial client record (FR-07 AC-2):
@@ -104,6 +114,25 @@ func NewTrialClient(userID, serverID int64, inboundID int, email, protocol, uuid
 		IsTrial:      true,
 		ExpiresAt:    &expiry,
 	}, nil
+}
+
+// PanelClientKey returns the credential x-ui's API uses to identify a client
+// (verified from web/service/inbound.go UpdateInboundClient + DelInboundClient):
+//
+//	vless/vmess → the client id (UUID), trojan → password, hysteria → auth,
+//	shadowsocks → email (the panel keys ss clients by email, not password).
+//
+// It is shared by renew, delete and any future panel-keyed operation so the
+// per-protocol mapping stays in one place (v1.38).
+func PanelClientKey(protocol, uuid, password, email string) string {
+	switch strings.ToLower(protocol) {
+	case "vless", "vmess":
+		return uuid
+	case "shadowsocks":
+		return email
+	default: // trojan, hysteria, hysteria2, unknown
+		return password
+	}
 }
 
 // Expired reports whether the client is past its expiry.

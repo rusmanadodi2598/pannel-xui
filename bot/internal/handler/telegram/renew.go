@@ -22,7 +22,8 @@ import (
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
 )
 
-// renewMenu lists the user's active accounts (FR-05 step 1).
+// renewMenu lists the user's active accounts (FR-05 step 1). Trial accounts
+// are excluded (v1.37): renewal is paid-only.
 func (d *Dispatcher) renewMenu(ctx context.Context, cb *models.CallbackQuery) {
 	user, err := d.shop.Users.EnsureUser(ctx, cb.From.ID, cb.From.Username, cb.From.FirstName)
 	if err != nil {
@@ -36,6 +37,7 @@ func (d *Dispatcher) renewMenu(ctx context.Context, cb *models.CallbackQuery) {
 		d.answer(ctx, cb.ID, "Gagal memuat daftar akun, coba lagi ya.")
 		return
 	}
+	clients = renewableClients(clients)
 	// Only accounts that can still be renewed (not expired forever) are shown;
 	// expired-but-owner accounts are still renewable in FR-05.
 	if len(clients) == 0 {
@@ -58,7 +60,13 @@ func (d *Dispatcher) renewPlans(ctx context.Context, cb *models.CallbackQuery, c
 		return
 	}
 	clients, err := d.shop.Clients.ListByUser(ctx, user.ID, 10)
-	if err != nil || !containsClient(clients, clientID) {
+	if err != nil {
+		d.answer(ctx, cb.ID, "Akun tidak ditemukan.")
+		return
+	}
+	// v1.37: trial accounts are not renewable — a crafted callback for one is
+	// treated exactly like a foreign/missing account.
+	if !containsClient(renewableClients(clients), clientID) {
 		d.answer(ctx, cb.ID, "Akun tidak ditemukan.")
 		return
 	}
@@ -127,15 +135,25 @@ func (d *Dispatcher) renewExecute(ctx context.Context, cb *models.CallbackQuery,
 		d.send(ctx, cb.Message.Message.Chat.ID, insufficientText(), topupHintKeyboard())
 	case err == ordersvc.ErrClientNotFound:
 		d.send(ctx, cb.Message.Message.Chat.ID, "Akun tidak ditemukan atau bukan milik kamu.", nil)
+	case err == ordersvc.ErrTrialNotRenewable:
+		d.send(ctx, cb.Message.Message.Chat.ID, "Akun trial tidak bisa diperpanjang. Silakan buat akun baru ya.", nil)
+	case err == ordersvc.ErrOrderInFlight:
+		d.send(ctx, cb.Message.Message.Chat.ID, "Perpanjangan sebelumnya masih diproses. Tunggu sebentar ya.", nil)
 	default:
 		d.logger.Error("renew failed", "user_id", cb.From.ID, "client_id", clientID, "error", err)
+		// res may be nil for pre-order failures (DB errors) — never dereference.
+		orderID := ""
+		if res != nil {
+			orderID = res.OrderID
+		}
 		d.send(ctx, cb.Message.Message.Chat.ID,
-			telegramservice.BuyFailedText(res.OrderID, "Terjadi kendala saat memperpanjang akun di server."), nil)
+			telegramservice.BuyFailedText(orderID, "Terjadi kendala saat memperpanjang akun di server."), nil)
 	}
 }
 
 // clientForConfirm loads the client row for the confirmation view (ownership already
-// enforced later by the order service; here we only need display data).
+// enforced later by the order service; here we only need display data). Trial
+// accounts are excluded — renewal is paid-only (v1.37).
 func (d *Dispatcher) clientForConfirm(ctx context.Context, cb *models.CallbackQuery, clientID int64) (postgres.ClientView, error) {
 	user, err := d.shop.Users.EnsureUser(ctx, cb.From.ID, cb.From.Username, cb.From.FirstName)
 	if err != nil {
@@ -145,12 +163,24 @@ func (d *Dispatcher) clientForConfirm(ctx context.Context, cb *models.CallbackQu
 	if err != nil {
 		return postgres.ClientView{}, err
 	}
-	for _, c := range clients {
+	for _, c := range renewableClients(clients) {
 		if c.ID == clientID {
 			return c, nil
 		}
 	}
 	return postgres.ClientView{}, errors.New("client not found for confirm view")
+}
+
+// renewableClients filters to paid accounts only (FR-05, v1.37): trial accounts
+// are never renewable and must not appear in the picker or accept callbacks.
+func renewableClients(clients []postgres.ClientView) []postgres.ClientView {
+	paid := make([]postgres.ClientView, 0, len(clients))
+	for _, c := range clients {
+		if !c.IsTrial {
+			paid = append(paid, c)
+		}
+	}
+	return paid
 }
 
 func containsClient(clients []postgres.ClientView, id int64) bool {

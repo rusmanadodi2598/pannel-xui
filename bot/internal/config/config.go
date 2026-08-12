@@ -15,43 +15,6 @@ import (
 	"time"
 )
 
-// Defaults (PRD §19.2).
-const (
-	DefaultWebhookPort           = 8443
-	DefaultWebhookPath           = "/api/v1/webhooks/telegram" // REST API convention (PRD §26)
-	DefaultWebhookMaxConnections = 40
-	DefaultWebhookWorkers        = 8
-	DefaultWebhookQueueBuffer    = 64
-	DefaultRateLimitRequests     = 30
-	DefaultXUIAPITimeoutSec      = 30
-	DefaultMinTopupAmount        = 5000
-	DefaultMaxTopupAmount        = 5000000
-	DefaultQRISFeePercent        = 0.025
-	DefaultQRISPPNPercent        = 0.11
-	DefaultQRISExpiryMinutes     = 15
-	DefaultTimeLocation          = "Asia/Jakarta"
-	DefaultLogLevel              = "info"
-
-	// Trial policy (FR-07): 2 akun/hari, durasi 1 jam, kuota 1 GB, 1 IP.
-	DefaultTrialEnabled       = true
-	DefaultTrialDailyLimit    = 2
-	DefaultTrialDurationHours = 1
-	DefaultTrialTrafficGB     = 1
-	DefaultTrialIPLimit       = 1
-
-	// Expiry reminders (FR-09): enabled, sweep interval, per-window batch.
-	DefaultExpiryNotifyEnabled     = true
-	DefaultExpiryNotifyIntervalMin = 360 // 6 jam: reminder lebih responsif daripada harian 09:00
-	DefaultExpiryNotifyBatch       = 50
-
-	// Connection pools (AGENTS.md §1.7: limits must be explicit).
-	DefaultDBMaxOpenConns    = 25
-	DefaultDBMaxIdleConns    = 10
-	DefaultDBConnMaxLifetime = 30 * time.Minute
-	DefaultRedisPoolSize     = 50
-	DefaultRedisDialTimeout  = 5 * time.Second
-)
-
 // Config holds every setting of the bot, parsed and validated at boot.
 type Config struct {
 	BotToken              string
@@ -104,6 +67,15 @@ type Config struct {
 	TrafficSyncEnabled  bool          // PRD §16.2
 	TrafficSyncInterval time.Duration // jarak antar sweep (TRAFFIC_SYNC_INTERVAL_MIN)
 	TrafficSyncBatch    int           // maks client diproses per sweep
+
+	// Health check (PRD §17): ping tiap panel, server mati tidak dijual.
+	HealthCheckEnabled  bool
+	HealthCheckInterval time.Duration
+
+	// Trial cleanup (PRD worker): nonaktifkan akun trial expired di panel.
+	TrialCleanupEnabled  bool
+	TrialCleanupInterval time.Duration
+	TrialCleanupBatch    int
 }
 
 // Load reads the environment, applies defaults and validates every field.
@@ -239,6 +211,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.applyTrafficSync(); err != nil {
+		return nil, err
+	}
+	if err := cfg.applyHealthCheck(); err != nil {
+		return nil, err
+	}
+	if err := cfg.applyTrialCleanup(); err != nil {
 		return nil, err
 	}
 

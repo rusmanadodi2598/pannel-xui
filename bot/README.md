@@ -31,14 +31,16 @@ bot/
 ├── .env.example                 # Template environment
 ├── Dockerfile                   # Multi-stage (alpine + CA certs)
 ├── nginx.conf                   # Reverse proxy TLS (template envsubst)
-├── docker-compose.yml           # bot + nginx + postgres + redis
+├── docker-compose.yml           # bot + nginx (DB/Redis: service HOST)
 └── README.md
 ```
 
 ## Prasyarat
 
 - Go 1.26+ (`go 1.26.5` sesuai `AGENTS.md`)
-- PostgreSQL & Redis (atau `docker compose`)
+- PostgreSQL & Redis **native di host** (systemd `postgresql@16-main` di
+  `127.0.0.1:5432` + `redis-server` di `127.0.0.1:6379`) — compose TIDAK
+  membundel DB/Redis (lihat section Docker Compose)
 
 ## Menjalankan lokal (dev)
 
@@ -148,6 +150,8 @@ Auto-order end-to-end: **pricing DB + seed → beli → fulfillment → ledger �
 > **UI copy policy**: semua **teks pesan tanpa emoji** (clean & modern — separator
 > `━━━` dan bullet `•` dipakai sebagai elemen non-emoji); **icon hanya pada
 > tombol navigasi** (menu utama, join grup, konfirmasi, kembali, flag negara).
+> **Satu pengecualian (v1.43)**: banner brand `🏪 KENTANG TECH` di template
+> notifikasi — keputusan user, parity legacy reference (lihat bullet Brand).
 
 - **Pricing** — 12 paket (ID/SG/JP/CN × 15/30/90 hari) di-seed idempotent dari
   `seed/pricing.json` (`PRICING_SEED_FILE`) ke tabel `pricing` saat boot;
@@ -158,18 +162,138 @@ Auto-order end-to-end: **pricing DB + seed → beli → fulfillment → ledger �
   `insecure_tls` per-panel (default `false` — hanya aktifkan untuk panel
   staging self-signed).
 - **Beli (FR-03/FR-04)** — `buy:menu` → pilih negara (hanya negara yang punya
-  server open) → pilih paket → ringkasan + cek saldo → konfirmasi →
-  `ordersvc.Purchase`: order `pending→processing` → `addClient` di panel →
-  **client row dibuat → debit saldo atomik + ledger** → `completed`; gagal di
-  panel → `failed`, saldo **tidak** dipotong; order ID `KTS-XXXXXXXX-VPN`.
-- **Renewal (FR-05)** — `renew:menu` → pilih akun → pilih paket → konfirmasi →
-  `updateClient` (expiry diperpanjang dari **sisa waktu**, tidak double-count)
-  → debit → `completed`; pesan sukses menampilkan expiry asli.
-- **Akun (FR-08 subset)** — `account:menu` list akun (status, sisa hari,
-  server flag); detail/config link menyusul di M6.
+  server open) → **pilih inbound (server + protocol) live dari panel**
+  (`buy:inbound:{server}:{inbound}:{country}` — vless reality/ws, vmess,
+  trojan, shadowsocks, hysteria, grpc, dll; enabled + port > 0 saja) →
+  pilih paket → ringkasan + cek saldo → konfirmasi → `ordersvc.Purchase`
+  (server+inbound+protocol terpin): order `pending→processing` → `addClient`
+  di inbound terpilih → **client row dibuat → debit saldo atomik + ledger** →
+  `completed`; gagal di panel → `failed`, saldo **tidak** dipotong; order ID
+  `KTS-XXXXXXXX-VPN`.
+- **Renewal (FR-05)** — `renew:menu` → pilih akun **paid only** (trial
+  disaring dari UI + ditolak service `ErrTrialNotRenewable`, v1.37) → pilih
+  paket → konfirmasi → **idempotence** (`FindInFlight` — order duplikat yang
+  masih pending/processing ditolak `ErrOrderInFlight`, v1.37) → **debit-first
+  + auto-refund** (v1.37): debit atomik `balance >= harga` (tidak pernah
+  minus) SEBELUM `updateClient`; panel/DB gagal setelah debit → **refund
+  atomik + ledger**; expiry diperpanjang dari **sisa waktu**, tidak
+  double-count → `completed`; pesan sukses menampilkan expiry asli.
+  **Fix v1.38 (ditemukan E2E staging)**: `updateClient` x-ui mengganti
+  seluruh objek client + validasi kredensial per-protocol — RenewClient kini
+  memuat spec penuh client dari settings panel (kuota/ipLimit/flow tetap) dan
+  hanya menaikkan `enable` + `expiryTime`; kunci panel per-protocol
+  (`domain.PanelClientKey`): vless/vmess→UUID, trojan/hysteria→password,
+  **shadowsocks→email** (dipakai renew & hapus akun).
+- **Akun (FR-08)** — `account:menu` list akun **pagination 5/halaman**
+  (newest first, FR-08 AC-1 v1.30) → `account:page:{n}` navigasi + indikator
+  non-aksi (`account:noop`, answer tanpa edit — parity reference
+  `accounts:page:{n}`); **status display v1.34 (AC-1)**: per item
+  `Aktif`/`Hampir Habis`/`Expired` (teks polos — icon policy; Hampir Habis =
+  nonaktif atau kuota ≥90% parity AC-3), badge `Trial ·` untuk akun trial,
+  sisa waktu smart (jam untuk <24 jam, hari untuk paid) → tombol
+  `Lihat Detail` per akun
+  (`account:view:{id}`) → detail lengkap: kredensial **protocol-aware**
+  (UUID vless/vmess, Password trojan/shadowsocks — v1.36) + **Limit IP &
+  traffic terpakai/kuota** (AC-1 penuh v1.35); **URL config build TIDAK
+  ditampilkan di detail ATAU view `Config V2Ray`** (v1.36, lebih clean —
+  view config = parameter manual + hint ekspor) — URL full HANYA di
+  **Ekspor .txt**; pesan sukses **Beli/Trial** juga tanpa URL (hint ekspor
+  saja, v1.36) + tombol `Config V2Ray` (`account:config:{id}`,
+  v1.26) + tombol **Convert YAML** (`account:convert:{id}`, FR-08 AC-2
+  v1.33 — Clash/Meta: 2 blok proxy TLS 443 / NTLS 80, transport asli
+  ws/grpc + password trojan asli, tag konsisten dengan remark URL;
+  reality/ss/hysteria → fallback ConfigLink native, tanpa YAML ws palsu)
+  + tombol `Ekspor .txt` (`account:export:{id}`) → dokumen `.txt`
+  berisi kredensial & config link dikirim via `sendDocument` + tombol
+  **Hapus Akun 2 langkah** (`account:delete:{id}` konfirmasi →
+  `account:delete_confirm:{id}` eksekusi, FR-08 AC-4 v1.31) — panel
+  `delClient` dulu, DB row setelah (ownership guard `GetViewOwned` di kedua
+  langkah; peringatan tidak bisa dikembalikan; panel gagal → DB tidak
+  dihapus; sukses → **tercatat di Riwayat FR-14** sebagai order
+  `deletion` — label "Hapus Akun", nominal "—" (v1.35)).
+- **Traffic per akun (FR-08 AC-3)** — tombol `Traffic` di detail
+  (`account:traffic:{id}`) → sync live dari panel dulu
+  (`trafficsvc.RefreshClient` — `getClientTraffics/:email`, protocol-
+  agnostic, verified dari source panel) → re-read DB → halaman usage:
+  **progress bar** 10 blok + **status warna 🟢🟡🔴** (≥90% Hampir Habis,
+  ≥70% Perhatian, else Normal), Upload/Download/Total/Kuota/Sisa + waktu
+  sync terakhir; tombol `Refresh` (callback sama, re-sync); sync gagal →
+  tetap render data terakhir (best effort). Worker `traffic sync` dan
+  refresh manual memakai SATU instance trafficsvc (shared panel factory).
+- **Riwayat (FR-14)** — `history:menu` → list order user **pagination
+  5/halaman** (newest first) → `history:page:{n}` navigasi + indikator
+  non-aksi (`history:noop`, answer tanpa edit) → `history:detail:{id}`
+  detail order (order ID, tipe, status, nominal, tanggal, akun terkait) —
+  **hanya order milik user** (ownership guard `GetOwned`, foreign =
+  "Transaksi tidak ditemukan"); kosong → pesan + tombol Beli/Top Up.
+  Status/tipe dilabeli id-ID (`completed`→Selesai, `failed`→Gagal, dst.).
+- **Bantuan (FR-15)** — `help:menu` → kategori (`help:order`, `help:topup`,
+  `help:disclaimer`, `help:info`) → sub-halaman statis id-ID (`help:tos:account`,
+  `help:tos:payment`) + shortcut aksi (`Beli VPN`/`Top Up`); setiap halaman
+  punya tombol kembali (`⬅️ Kembali`) & `🏠 Menu Utama` (icon policy);
+  konten murni statis — `service/telegram/menu_help.go` +
+  `menu_help_tos.go` (split §1.1), routing `handler/telegram/help.go`
+  tanpa service seam (parity `help_handler` reference).
+- **Keyboard layout zigzag (v1.42, UX)** — semua sub-menu tidak lagi
+  vertikal 1-1-1-1: tombol ditata pola **2-1-2-1-2** (baris pertama 2 tombol,
+  berikutnya 1, berikutnya 2, dst. — baris terakhir mengambil sisa). Helper
+  tunggal `service/telegram/menu_rows.go` (`packRows` + `backBtn`) dipakai
+  semua picker (country/inbound/plan/server/client), menu aksi (admin,
+  detail akun, sukses beli/trial) dan layar konfirmasi (Konfirmasi + Batal
+  satu baris); urutan tombol dipertahankan; pager list Akun/Riwayat tetap
+  baris sendiri. Tidak diubah (sudah 2-kolom): menu utama, quick-pick topup,
+  kategori Bantuan.
+
+## Config V2Ray (v1.26 → v1.27 path dinamis)
+
+View config per akun — **dua opsi URL TLS/non-TLS** untuk import v2rayNG
+(format reference `client-vpn`):
+
+- `service/server/link_dual.go` — `DualConfigLinks`: pair **ws/grpc TLS port
+  443** / **non-TLS port 80**, host dari `vpn_servers.host`; **path = asli
+  dari API** (streamSettings inbound, disimpan saat provisioning — v1.27):
+  `InboundStream()` mengekstrak `wsSettings.path` (ws) / `grpcSettings.serviceName`
+  (grpc). Contoh nyata panel staging: `/vlessws`, `/vmessws`, `/trojanws`,
+  `trojan-grpc`. **ws**→`type=ws&path=%2F…&host=…`, **grpc**→`type=grpc&serviceName=…`.
+  **tcp/reality, shadowsocks, hysteria → tanpa varian → fallback `ConfigLink`
+  native** (tidak ada link ws palsu utk akun reality). **Legacy row** (network
+  kosong) tetap ws `/{protocol}` (backward compat). Kolom baru:
+  `vpn_clients.inbound_network` + `inbound_path` (migrasi `000004`).
+- `service/telegram/menu_config.go` — `AccountConfigText`: detail konfigurasi
+  lengkap (domain, port TLS/non-TLS, ID/Password, **Network + Path/Service
+  Name dinamis**) + 2 URL + cara pakai & tips; keyboard kembali ke detail.
+  Tombol `Config V2Ray` juga di keyboard sukses Beli/Trial; ekspor `.txt`
+  menyertakan kedua URL.
+- Callback `account:config:{id}` — ownership `GetViewOwned` (id + user_id),
+  sama seperti view/export.
+
+> **Catatan staging**: port 80 saat ini 301 → HTTPS; bila non-TLS mau dipakai
+> benar-benar, arahkan ke port non-TLS panel langsung atau buka location di
+> nginx (lihat UAT). Path dual link WAJIB match lokasi nginx — mapping manual
+> per deployment (UAT v1.27).
 - **Ledger** — `balance_transactions` immutable; debit/kredit atomik via
   `UPDATE users SET balance = balance ± x WHERE balance >= x` dalam satu tx
   (`ErrInsufficientBalance` untuk saldo kurang/banned).
+- **Notifikasi order ke grup admin (FR-04 AC, v1.41)** — saat order
+  **berbayar** (beli/renew) **completed**, bot mengirim notice ke
+  `NOTIFICATION_GROUP_ID` (order id, tipe, user, paket, nominal, email akun,
+  aktif sampai, sisa saldo — body emoji-free, reuse label `orderTypeLabel`);
+  **trial dikecualikan** (akun gratis); **best-effort** — gagal kirim hanya
+  di-log, order tetap completed (seam `ordersvc.OrderNotifier` variadic,
+  adapter di `cmd/bot/notify.go`; **gate `!= 0`** karena Telegram group ID
+  negatif).
+- **Brand KENTANG TECH (v1.43 → v1.44 lengkap)** — semua **template
+  notifikasi/pesan transaksi** dibuka dengan banner brand `🏪 KENTANG TECH`
+  + separator `━━━` (parity legacy reference `client-vpn`): notice admin
+  grup, reminder kadaluarsa (FR-09), sukses **dan** gagal
+  Beli/Perpanjang/Trial, ringkasan konfirmasi (beli/perpanjang/trial),
+  ringkasan & QR Top Up. Brand = **KENTANG TECH** (BUKAN "KENTANG TECH
+  STORE" — brand legacy); banner brand adalah **satu-satunya pengecualian
+  icon** pada icon policy (keputusan user). **Ejaan diseragamkan (v1.44)**:
+  header ekspor `.txt` (`=== AKUN VPN KENTANG TECH ===`), sambutan `/start`
+  dan `help:info` memakai `BrandName` — tidak ada ejaan legacy
+  (KentangTech/KENTANGTECH) di copy user-facing. Sumber tunggal:
+  `service/telegram/menu_brand.go` (`BrandHeader()`/`BrandName`).
 
 Env baru M4: `PRICING_SEED_FILE`, `PANEL_1_*` … `PANEL_N_*`
 (`PANEL_N_INSECURE=true` untuk panel self-signed).
@@ -198,12 +322,13 @@ Worker interval memindai akun yang hampir habis dan mengirim pengingat
 - Gagal kirim → **tidak** ditandai → retry sweep berikutnya; renewal
   (`UpdateExpiry`) mereset flag → siklus notifikasi dimulai ulang.
 - Akun trial (1 jam) dan akun nonaktif/expired **tidak** di-notifikasi.
-- `internal/job/interval.go` — **`IntervalWorker` generik** (dipakai notifikasi
-  & traffic sync, bukan duplikasi loop): stdlib `time.Ticker` (bukan
-  robfig/cron; AGENTS.md prefer stdlib), sweep pertama langsung saat boot, lalu
-  tiap interval. Setiap sweep ber-timeout dan panic-recovered (AGENTS.md §1.6);
-  loop berhenti saat shutdown (ctx cancel + WaitGroup drain). Tanggal di pesan
-  diformat sesuai `TIME_LOCATION`.
+- `internal/job/interval.go` — **`IntervalWorker` generik** (dipakai
+  notifikasi, traffic sync, health check & trial cleanup — bukan duplikasi
+  loop): stdlib `time.Ticker` (bukan robfig/cron; AGENTS.md prefer stdlib),
+  sweep pertama langsung saat boot, lalu tiap interval. Setiap sweep
+  ber-timeout dan panic-recovered (AGENTS.md §1.6); loop berhenti saat
+  shutdown (ctx cancel + WaitGroup drain). Tanggal di pesan diformat sesuai
+  `TIME_LOCATION`.
 
 Env: `EXPIRY_NOTIFY_DAYS` (7,3,1), `EXPIRY_NOTIFY_ENABLED` (true),
 `EXPIRY_NOTIFY_INTERVAL_MIN` (360), `EXPIRY_NOTIFY_BATCH` (50 — maks akun per
@@ -231,6 +356,50 @@ Saya" selalu segar tanpa N+1:
 Env: `TRAFFIC_SYNC_ENABLED` (true), `TRAFFIC_SYNC_INTERVAL_MIN` (5 — 1-60),
 `TRAFFIC_SYNC_BATCH` (200).
 
+## Health Check Panel (v1.45, PRD §17)
+
+Worker interval memeriksa ketersediaan tiap panel aktif dan menulis hasilnya
+ke `vpn_servers.health_status` (`ok`/`down`) + `last_health_check`:
+
+- `service/health` — `RunOnce` list panel aktif → per panel
+  `GET /xui/API/server/status` (timeout `XUI_API_TIMEOUT`) → tulis status;
+  **satu panel gagal tidak menggagalkan sweep** (isolasi sama dengan sync
+  traffic). Panel yang tidak terjangkau (network/decrypt error) ditandai
+  `down`. **DB write pakai context terpisah** (`healthWriteTimeout` 10s,
+  parent ctx) — panel mati yang menghabiskan budget connect tetap tercatat
+  `down` (fix E2E v1.45: tanpa ini status tidak pernah tersimpan, server mati
+  tetap dijual).
+- **Server mati tidak dijual**: `ListBuyable` (menu Beli/Trial & country
+  picker) mengecualikan panel `health_status = 'down'` — `IS DISTINCT FROM
+  'down'` agar status lain (NULL / default `'unknown'` / `ok`) tetap dijual
+  (boot pertama sebelum health sweep tidak menghilang). Status `down` juga
+  terlihat di admin server list (`admin:server`, kolom health).
+- Worker ini melengkapi kolom yang selama ini tidak pernah diisi
+  (`health_status`/`last_health_check` ada sejak migrasi awal).
+
+Env: `HEALTH_CHECK_ENABLED` (true), `HEALTH_CHECK_INTERVAL_SEC` (60 — 1-3600).
+
+## Trial Cleanup (v1.45, PRD worker)
+
+Akun trial berdurasi 1 jam (FR-07); tanpa pembersihan, trial yang lewat masa
+pakai tetap `enable` di panel dan mencuri kuota. Worker interval
+menonaktifkannya:
+
+- `service/trialcleanup` — `RunOnce` list kandidat (trial `is_active`,
+  belum `is_expired`, `expires_at <= now()`) → group per server →
+  `serversvc.DisableClients` (**satu `GetInbounds` per panel**, anti N+1 §1.7:
+  spec raw tiap client di-patch `enable=false` — kuota/ipLimit/flow
+  dipertahankan, kunci updateClient per-protocol dari spec: vless/vmess→id,
+  trojan→password, ss→email, hysteria→auth) → **baru** `MarkTrialExpired`
+  (is_active=false + is_expired=true; row tetap ada di Akun Saya dengan
+  badge Trial + status Expired).
+- **Panel gagal → DB tidak ditandai** (retry sweep berikutnya); client yang
+  sudah hilang dari panel dihitung sukses; satu panel gagal tidak
+  menggagalkan sweep.
+
+Env: `TRIAL_CLEANUP_ENABLED` (true), `TRIAL_CLEANUP_INTERVAL_MIN` (15 —
+1-1440), `TRIAL_CLEANUP_BATCH` (50).
+
 ## Panel Admin (M6 partial, FR-11)
 
 `/admin` + callback `admin:*` — **hanya `ADMIN_IDS`** (di-re-check di setiap
@@ -250,7 +419,40 @@ surface, AC FR-11). Input bebas (harga, broadcast, ID user) memakai FSM admin
   `users.is_banned` (tahan Redis flush; guard debit SQL juga memblokir).
 - FSM di-clear setelah selesai/batal; input invalid → re-prompt.
 
-Belum di M6 (FR-11): manajemen server, statistik/audit log, adjust saldo.
+- **Adjust Saldo (FR-11, v1.39)** — `admin:saldo` → `+ Kredit Saldo` /
+  `- Debit Saldo` → FSM 2 langkah (ketik Telegram ID → ketik nominal rupiah) →
+  konfirmasi → `adminsvc.AdjustBalance`: resolve tgID → PK, lalu `Credit`/
+  `Debit` atomik **jalur yang sama dengan order** (SQL guard + ledger immutable,
+  ref `ADJ-<random>`); debit > saldo ditolak ramah; unknown user → "belum
+  terdaftar". **Idempotence (fix review v1.39)**: nominal input men-arm state
+  `saldo:confirm:*` dan confirm **memverifikasi staging sebelum eksekusi** —
+  tap ganda/retry pada tombol Konfirmasi tidak pernah menjalankan dua kali.
+  Setiap mutasi tercatat di `balance_transactions`.
+- **Manajemen Server (FR-11, v1.40)** — `admin:server` → daftar semua panel
+  (aktif + nonaktif) → detail per server → **Toggle Buka/Penjualan**
+  (`admin:server:open:{id}` — `is_open`, negara itu hilang dari pilihan Beli/
+  Trial) dan **Toggle Aktif** (`admin:server:active:{id}` — `is_active`,
+  panel dikecualikan dari sync traffic) → tombol **Tambah Server**
+  (`admin:server:add`): **FSM 6 langkah** (nama → host → port → username →
+  password → negara, opsional `CODE,FLAG`), draft menumpuk di FSM Redis
+  (`srvadd:*`, TTL 10 mnt), input invalid → re-prompt langkah yang sama, dan
+  langkah terakhir **men-arm state `srvadd:confirm:*`** — confirm
+  **memverifikasi staging sebelum `AddServer`** (parity idempotence saldo
+  v1.39: tap ganda hanya membuat SATU server); password **disegel
+  AES-256-GCM** oleh serversvc sebelum disimpan (`password_enc`), tidak pernah
+  di-echo ke chat.
+- **Statistik & Audit Log (FR-11, v1.40)** — `admin:stats` → dashboard
+  agregasi SQL satu round-trip (total/today orders + revenue dari
+  `final_amount` order `completed`, breakdown status completed/failed/
+  pending/processing/cancelled/refunded, total user, **client aktif**)
+  + tombol **Order Terbaru** (10 baris bounded) → `admin:audit` → **audit
+  log admin** (migrasi `000005` tabel `admin_audit_log` immutable, index
+  `created_at DESC`): setiap aksi admin (ubah harga, toggle plan, reload,
+  ban/unban, adjust saldo, broadcast, toggle/tambah server) tercatat siapa
+  (admin id), aksi, target, detail — 15 baris terbaru per halaman.
+
+FR-11 admin **lengkap** (harga, toggle, reload, broadcast, ban/unban, adjust
+saldo, server, statistik, audit).
 
 ## Menjalankan dengan Docker Compose (produksi)
 
@@ -263,8 +465,17 @@ docker compose ps
 curl https://<BOT_DOMAIN>/health
 ```
 
-`nginx` menerima HTTPS di `443` dan meneruskan ke `bot:8443`:
-`https://<BOT_DOMAIN>/api/v1/webhooks/telegram → http://bot:8443/api/v1/webhooks/telegram`.
+> **PostgreSQL & Redis HOST** (staging): stack ini TIDAK men-spin container
+> DB. `DATABASE_URL`/`REDIS_URL` menunjuk ke service native host
+> (`postgresql@16-main` :5432, `redis-server` :6379 — hanya bind loopback),
+> jadi bot & nginx memakai `network_mode: host`. Konsekuensi: port bot
+> (WEBHOOK_PORT, default `8443`) dan nginx (`80`/`443`) bind langsung di
+> host — pastikan bebas, dan stop proses staging lama (mis.
+> `/tmp/bot-staging` di `:8443`) sebelum `up`.
+
+`nginx` menerima HTTPS di `443` dan meneruskan ke `127.0.0.1:8443` (host
+network):
+`https://<BOT_DOMAIN>/api/v1/webhooks/telegram → http://127.0.0.1:8443/api/v1/webhooks/telegram`.
 
 ### TLS (Nginx) — syarat webhook Telegram
 
@@ -363,12 +574,14 @@ pada dir legacy di `.golangci.yml` hanya untuk lint manual.
 > `MAX_TOPUP_AMOUNT`, `QRIS_FEE_PERCENT`, `QRIS_PPN_PERCENT`,
 > `QRIS_EXPIRY_MINUTES` (default ada di `config`/`.env.example`).
 | M6 | Trial, notifikasi, sync traffic, admin     | ✅ (v1.21) |
-| M7 | Hardening, test, UAT                      | 🔶 (v1.22: coverage gap ✅, load test ✅, UAT checklist ✅) |
+| M7 | Hardening, test, UAT                      | 🔶 (v1.22: coverage gap ✅, load test ✅, UAT checklist ✅; v1.26: **config v2Ray dual TLS/non-TLS ✅**; v1.28: **Riwayat FR-14 ✅**; v1.29: **Bantuan FR-15 ✅**; v1.30: **pagination Akun FR-08 AC-1 ✅**; v1.31: **hapus akun FR-08 AC-4 ✅**; v1.32: **traffic + refresh manual FR-08 AC-3 ✅**; v1.33: **convert YAML Clash/Meta FR-08 AC-2 ✅**; v1.34: **status display list Akun FR-08 AC-1 ✅**; v1.35: **detail akun AC-1 lengkap (Limit IP + traffic terpakai) ✅ + hapus tercatat di Riwayat AC-4 ✅**; v1.36: **revisi minor UI akun (UUID/Password protocol-aware; URL build hanya di ekspor .txt; sukses Beli/Trial tanpa URL) ✅**; v1.37: **renew paid-only + idempotence (FindInFlight) + debit-first auto-refund ✅**; v1.38: **fix renew panel "empty client ID" — spec penuh client dipertahankan, PanelClientKey per-protocol ✅**; v1.39: **adjust saldo admin + idempotence confirm ✅**; v1.40: **manajemen server + statistik + audit log admin (FR-11 lengkap) ✅**; v1.41: **notifikasi order sukses ke grup admin (FR-04 AC) ✅**; v1.42: **UX keyboard zigzag 2-1-2-1 semua sub-menu (packRows di menu_rows.go) ✅**; v1.43: **brand KENTANG TECH di semua template notifikasi/pesan transaksi (banner 🏪 pengecualian icon policy) ✅**; v1.44: **konsistensi brand ditutup — ringkasan konfirmasi + pesan gagal ber-brand, ejaan diseragamkan (txt/home/info pakai BrandName) ✅**; v1.45: **worker health check panel (PRD §17 — server mati tidak dijual, ListBuyable filter health_status=down) + worker trial cleanup (disable akun trial expired di panel lalu tandai is_expired) ✅**) |
 
 > **M6 status (v1.21)**: **Trial (FR-07) ✅** — `service/trial` (daily limit
 > 2x/hari via Redis counter TTL s.d. tengah malam, claim anti-race + rollback),
-> flow `trial:menu` → `trial:server:{id}` → `trial:confirm:{id}` (+ `/trial`),
-> akun trial 1 jam / 1 GB / 1 IP (`is_trial=true`, **tanpa debit**), tombol
+> flow `trial:menu` → `trial:server:{id}` → `trial:inbound:{server}:{inbound}`
+> → `trial:confirm:{server}:{inbound}` (+ `/trial`) — protocol dipilih dari
+> panel (v1.24), akun trial 1 jam / 1 GB / 1 IP (`is_trial=true`, **tanpa
+> debit**), tombol
 > "Beli VPN Premium" setelah sukses. **Notifikasi kadaluarsa (FR-09) ✅** —
 > worker H-7/H-3/H-1 (section di bawah). **Admin (FR-11) ✅** — harga,
 > toggle plan, broadcast, ban/unban (section di bawah). **Sync traffic

@@ -21,6 +21,7 @@ import (
 	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 	ordersvc "github.com/kentangtech/bot-order/internal/service/order"
+	serversvc "github.com/kentangtech/bot-order/internal/service/server"
 	trialsvc "github.com/kentangtech/bot-order/internal/service/trial"
 )
 
@@ -32,6 +33,9 @@ type fakeShopDeps struct {
 	clients *fakeClients
 	trials  *fakeTrialRunner
 	tlim    *fakeTrialLimiter
+	history *fakeHistory
+	deleter *fakeDeleter
+	traffic *fakeTraffic
 }
 
 func newFakeShop() *fakeShopDeps {
@@ -43,6 +47,9 @@ func newFakeShop() *fakeShopDeps {
 		clients: &fakeClients{},
 		trials:  &fakeTrialRunner{},
 		tlim:    &fakeTrialLimiter{enabled: true, remaining: 2, limit: 2},
+		history: &fakeHistory{},
+		deleter: &fakeDeleter{},
+		traffic: &fakeTraffic{},
 	}
 }
 
@@ -50,21 +57,26 @@ func dispatcherWithShop(api API, f *fakeShopDeps) *Dispatcher {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	shop := &Shop{
 		Plans: f.plans, Servers: f.servers, Users: f.users, Orders: f.orders,
-		Clients: f.clients, Trials: f.trials, TrialLm: f.tlim,
+		Clients: f.clients, Trials: f.trials, TrialLm: f.tlim, History: f.history,
+		Deleter: f.deleter, Traffic: f.traffic,
 	}
 	return NewDispatcher(api, &fakeGate{}, &fakeBan{}, &fakeLimiter{allow: true}, logger, groupLink, nil, shop, nil, nil)
 }
 
 type fakeTrialRunner struct {
-	called *int64
-	result *ordersvc.PurchaseResult
-	err    error
+	called       *int64
+	lastInbound  int
+	lastProtocol string
+	result       *ordersvc.PurchaseResult
+	err          error
 }
 
-func (f *fakeTrialRunner) CreateTrial(_ context.Context, _ *postgres.User, serverID int64, _ ordersvc.TrialSpec) (*ordersvc.PurchaseResult, error) {
+func (f *fakeTrialRunner) CreateTrial(_ context.Context, _ *postgres.User, serverID int64, spec ordersvc.TrialSpec) (*ordersvc.PurchaseResult, error) {
 	if f.called != nil {
 		*f.called = serverID
 	}
+	f.lastInbound = spec.InboundID
+	f.lastProtocol = spec.Protocol
 	return f.result, f.err
 }
 
@@ -114,12 +126,17 @@ func (f *fakePlans) GetPlan(_ context.Context, _ string, _ int) (*domain.VpnPlan
 }
 
 type fakeServers struct {
-	list []postgres.ServerView
-	err  error
+	list      []postgres.ServerView
+	inbounds  []serversvc.InboundOption
+	inboundsE error
+	err       error
 }
 
 func (f *fakeServers) ListBuyable(context.Context) ([]postgres.ServerView, error) {
 	return f.list, f.err
+}
+func (f *fakeServers) ListInbounds(context.Context, int64) ([]serversvc.InboundOption, error) {
+	return f.inbounds, f.inboundsE
 }
 
 type fakeUsers struct {
@@ -134,38 +151,43 @@ func (f *fakeUsers) EnsureUser(_ context.Context, _ int64, _, _ string) (*postgr
 func (f *fakeUsers) Balance(context.Context, int64) (domain.Money, error) { return f.balance, f.err }
 
 type purchaseCall struct {
-	Country string
-	Days    int
+	Country  string
+	Days     int
+	ServerID int
+	Inbound  int
+	Protocol string
 }
 type renewCall struct {
 	ClientID int64
 	Country  string
 	Days     int
 }
+type deletionCall struct {
+	UserID   int64
+	ServerID int64
+	Protocol string
+	Email    string
+}
 
 type fakeOrders struct {
 	purchased *purchaseCall
 	renewed   *renewCall
+	deleted   *deletionCall
 	res       *ordersvc.PurchaseResult
 	err       error
 }
 
-func (f *fakeOrders) Purchase(_ context.Context, _ *postgres.User, country string, days int) (*ordersvc.PurchaseResult, error) {
-	f.purchased = &purchaseCall{Country: country, Days: days}
+func (f *fakeOrders) Purchase(_ context.Context, _ *postgres.User, country string, days, serverID, inboundID int, protocol string) (*ordersvc.PurchaseResult, error) {
+	f.purchased = &purchaseCall{Country: country, Days: days, ServerID: serverID, Inbound: inboundID, Protocol: protocol}
 	return f.res, f.err
 }
 func (f *fakeOrders) Renew(_ context.Context, _ *postgres.User, clientID int64, country string, days int) (*ordersvc.PurchaseResult, error) {
 	f.renewed = &renewCall{ClientID: clientID, Country: country, Days: days}
 	return f.res, f.err
 }
-
-type fakeClients struct {
-	list []postgres.ClientView
-	err  error
-}
-
-func (f *fakeClients) ListByUser(context.Context, int64, int) ([]postgres.ClientView, error) {
-	return f.list, f.err
+func (f *fakeOrders) RecordDeletion(_ context.Context, userID, serverID int64, protocol, email string) error {
+	f.deleted = &deletionCall{UserID: userID, ServerID: serverID, Protocol: protocol, Email: email}
+	return f.err
 }
 
 // assertButton checks that a rendered edit contains a button with the callback.
@@ -197,5 +219,4 @@ var (
 	_ ServerReader = (*fakeServers)(nil)
 	_ UserReader   = (*fakeUsers)(nil)
 	_ OrderRunner  = (*fakeOrders)(nil)
-	_ ClientReader = (*fakeClients)(nil)
 )

@@ -43,7 +43,7 @@ func TopupKeyboard() models.ReplyMarkup {
 		}
 		rows = append(rows, row)
 	}
-	rows = append(rows, []models.InlineKeyboardButton{{Text: "✏️ Nominal Lain", CallbackData: PrefixTopupCustom}})
+	rows = append(rows, []models.InlineKeyboardButton{{Text: "Nominal Lain", CallbackData: PrefixTopupCustom}})
 	rows = append(rows, backRow(CallbackTopupBack, "🏠 Menu Utama"))
 	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
@@ -51,17 +51,17 @@ func TopupKeyboard() models.ReplyMarkup {
 // TopupConfirmKeyboard asks explicit confirmation with the chosen net amount.
 // Back re-renders the amount picker (topup:menu), not the home menu.
 func TopupConfirmKeyboard(net domain.Money) models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "✅ Konfirmasi Top Up", CallbackData: PrefixTopupConfirm + fmt.Sprintf("%d", net.Rupiah())}},
-		backRow(CallbackTopup, "⬅️ Kembali"),
-	}}
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(
+		models.InlineKeyboardButton{Text: "Konfirmasi Top Up", CallbackData: PrefixTopupConfirm + fmt.Sprintf("%d", net.Rupiah())},
+		backBtn(CallbackTopup, "⬅️ Kembali"),
+	)}
 }
 
 // TopupCustomKeyboard is shown while waiting for a typed nominal; the cancel
-// button is a shortcut besides the /cancel command.
+// button is a shortcut besides the /cancel command (Cancel → icon allowed).
 func TopupCustomKeyboard() models.ReplyMarkup {
 	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		backRow(CallbackTopupBack, "❌ Batalkan"),
+		backRow(CallbackTopupBack, "Batalkan ✕"),
 	}}
 }
 
@@ -80,9 +80,9 @@ func TopupCustomPrompt(min, max domain.Money) string {
 		min.FormatIDR(), max.FormatIDR())
 }
 
-// TopupSummaryText renders the confirmation summary (FR-06).
+// TopupSummaryText renders the confirmation summary (FR-06, branded v1.43).
 func TopupSummaryText(q topupsvc.Quote, balance domain.Money) string {
-	return fmt.Sprintf("Ringkasan Top Up\n━━━━━━━━━━━━━━\n"+
+	return fmt.Sprintf(BrandHeader()+"\n\nRingkasan Top Up\n━━━━━━━━━━━━━━\n"+
 		"Saldo diterima: %s\n"+
 		"Total bayar: %s\n"+
 		"Biaya layanan: %s (efektif %.3f%%)\n"+
@@ -97,10 +97,10 @@ func TopupAPIUnavailableText() string {
 		"Menu pembayaran sudah aktif, namun kanal pembayaran sedang di-upgrade. Coba lagi dalam beberapa saat ya."
 }
 
-// TopupPaymentText renders a created QRIS payment (unreachable until the
-// rewritten API ships; kept so the success path is product-final).
+// TopupPaymentText renders a created QRIS payment (branded v1.43; unreachable
+// until the rewritten API ships — kept so the success path is product-final).
 func TopupPaymentText(p *topupsvc.PaymentResult) string {
-	return fmt.Sprintf("Pembayaran QRIS dibuat\n━━━━━━━━━━━━━━\n"+
+	return fmt.Sprintf(BrandHeader()+"\n\nPembayaran QRIS dibuat\n━━━━━━━━━━━━━━\n"+
 		"Total bayar: %s\n"+
 		"Berlaku sampai: %s\n\n"+
 		"Scan QR di bawah untuk menyelesaikan pembayaran.",

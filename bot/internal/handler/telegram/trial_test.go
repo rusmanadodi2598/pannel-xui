@@ -18,12 +18,17 @@ import (
 
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 	ordersvc "github.com/kentangtech/bot-order/internal/service/order"
+	serversvc "github.com/kentangtech/bot-order/internal/service/server"
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
 )
 
-func TestTrialFlow_GivenRemainingQuota_ThenMenuServerConfirmExecuted(t *testing.T) {
+func TestTrialFlow_GivenRemainingQuota_ThenMenuServerInboundConfirmExecuted(t *testing.T) {
 	shop := newFakeShop()
 	shop.servers.list = []postgres.ServerView{{ID: 1, Name: "ID-01", CountryCode: "ID", FlagEmoji: "🇮🇩"}}
+	shop.servers.inbounds = []serversvc.InboundOption{
+		{ServerID: 1, ServerName: "ID-01", Country: "ID", InboundID: 4, Protocol: "vless", Remark: "reality"},
+		{ServerID: 1, ServerName: "ID-01", Country: "ID", InboundID: 5, Protocol: "trojan", Remark: "ws"},
+	}
 	var calledServer int64
 	shop.trials.called = &calledServer
 	shop.trials.result = &ordersvc.PurchaseResult{
@@ -40,20 +45,30 @@ func TestTrialFlow_GivenRemainingQuota_ThenMenuServerConfirmExecuted(t *testing.
 	}
 	assertButton(t, api.edited[0], telegramservice.PrefixTrialServer+"1")
 
-	// Step 2: trial:server:1 → confirmation summary.
+	// Step 2: trial:server:1 → inbound (server + protocol) picker.
 	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTrialServer+"1"))
 	if len(api.edited) != 2 || !strings.Contains(api.edited[1].text, "ID-01") {
 		t.Fatalf("step2 edited = %+v", api.edited)
 	}
-	assertButton(t, api.edited[1], telegramservice.PrefixTrialConfirm+"1")
+	assertButton(t, api.edited[1], telegramservice.PrefixTrialInbound+"1:4")
 
-	// Step 3: trial:confirm:1 → claim + create → success message.
-	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTrialConfirm+"1"))
+	// Step 3: trial:inbound:1:4 → confirmation summary with protocol.
+	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTrialInbound+"1:4"))
+	if len(api.edited) != 3 || !strings.Contains(api.edited[2].text, "Protocol: VLESS") {
+		t.Fatalf("step3 edited = %+v", api.edited)
+	}
+	assertButton(t, api.edited[2], telegramservice.PrefixTrialConfirm+"1:4")
+
+	// Step 4: trial:confirm:1:4 → claim + create on pinned inbound → success.
+	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTrialConfirm+"1:4"))
 	if len(api.sent) != 1 || !strings.Contains(api.sent[0].text, "Trial Berhasil") {
-		t.Fatalf("step3 sent = %+v", api.sent)
+		t.Fatalf("step4 sent = %+v", api.sent)
 	}
 	if calledServer != 1 {
 		t.Errorf("CreateTrial server = %d, want 1", calledServer)
+	}
+	if shop.trials.lastInbound != 4 || shop.trials.lastProtocol != "vless" {
+		t.Errorf("CreateTrial inbound/protocol = %d/%q, want 4/vless", shop.trials.lastInbound, shop.trials.lastProtocol)
 	}
 	if shop.tlim.claimed != 1 {
 		t.Errorf("claimed = %d, want 1", shop.tlim.claimed)
@@ -76,11 +91,14 @@ func TestTrialFlow_GivenLimitReachedAtMenu_ThenLimitText(t *testing.T) {
 func TestTrialFlow_GivenLimitReachedAtConfirm_ThenNoAccountCreated(t *testing.T) {
 	shop := newFakeShop()
 	shop.servers.list = []postgres.ServerView{{ID: 1, Name: "ID-01"}}
+	shop.servers.inbounds = []serversvc.InboundOption{
+		{ServerID: 1, ServerName: "ID-01", Country: "ID", InboundID: 4, Protocol: "vless"},
+	}
 	shop.tlim.remaining = 0 // menu passes, but confirm claims → over limit
 
 	api := &fakeAPI{}
 	d := dispatcherWithShop(api, shop)
-	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTrialConfirm+"1"))
+	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTrialConfirm+"1:4"))
 
 	if len(api.edited) != 1 || !strings.Contains(api.edited[0].text, "sudah habis") {
 		t.Fatalf("edited = %+v", api.edited)

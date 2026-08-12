@@ -31,23 +31,25 @@ const (
 )
 
 // HomeKeyboard renders the FR-02 main menu (2-column inline keyboard).
+// Icon policy: icons only on navigation buttons (Home/Back/Cancel/Next/Prev);
+// action buttons are text-only.
 func HomeKeyboard() models.ReplyMarkup {
 	return models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
-				{Text: "🛒 Beli VPN", CallbackData: CallbackBuy},
-				{Text: "🔄 Perpanjang", CallbackData: CallbackRenew},
+				{Text: "Beli VPN", CallbackData: CallbackBuy},
+				{Text: "Perpanjang", CallbackData: CallbackRenew},
 			},
 			{
-				{Text: "👤 Akun Saya", CallbackData: CallbackAccount},
-				{Text: "💳 Top Up", CallbackData: CallbackTopup},
+				{Text: "Akun Saya", CallbackData: CallbackAccount},
+				{Text: "Top Up", CallbackData: CallbackTopup},
 			},
 			{
-				{Text: "🎁 Trial", CallbackData: CallbackTrial},
-				{Text: "📜 Riwayat", CallbackData: CallbackHistory},
+				{Text: "Trial", CallbackData: CallbackTrial},
+				{Text: "Riwayat", CallbackData: CallbackHistory},
 			},
 			{
-				{Text: "ℹ️ Bantuan", CallbackData: CallbackHelp},
+				{Text: "Bantuan", CallbackData: CallbackHelp},
 			},
 		},
 	}
@@ -58,7 +60,7 @@ func HomeKeyboard() models.ReplyMarkup {
 func HomeText(firstName string) string {
 	return fmt.Sprintf(
 		"Halo, %s!\n\n"+
-			"Selamat datang di KentangTech VPN Bot.\n"+
+			"Selamat datang di "+BrandName+" VPN Bot.\n"+
 			"Kelola akun VPN kamu langsung dari sini:\n\n"+
 			"• Beli akun VPN baru\n"+
 			"• Perpanjang masa aktif\n"+
@@ -78,9 +80,9 @@ func HomeText(firstName string) string {
 func JoinKeyboard(groupLink string) models.ReplyMarkup {
 	rows := make([][]models.InlineKeyboardButton, 0, 2)
 	if strings.TrimSpace(groupLink) != "" {
-		rows = append(rows, []models.InlineKeyboardButton{{Text: "🔗 Join Grup", URL: groupLink}})
+		rows = append(rows, []models.InlineKeyboardButton{{Text: "Join Grup ↗", URL: groupLink}})
 	}
-	rows = append(rows, []models.InlineKeyboardButton{{Text: "✅ Sudah Join", CallbackData: CallbackGateCheck}})
+	rows = append(rows, []models.InlineKeyboardButton{{Text: "Sudah Join ✓", CallbackData: CallbackGateCheck}})
 	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 

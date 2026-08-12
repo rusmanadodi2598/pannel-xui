@@ -96,3 +96,6 @@ func (r *Repository) Clients() *ClientRepo { return NewClientRepo(r.db) }
 
 // Orders returns the orders repository (M4, FR-04).
 func (r *Repository) Orders() *OrderRepo { return NewOrderRepo(r.db) }
+
+// Audit returns the admin audit log repository (FR-11, v1.40).
+func (r *Repository) Audit() *AuditRepo { return NewAuditRepo(r.db) }

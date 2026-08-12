@@ -24,6 +24,7 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
+	"github.com/kentangtech/bot-order/internal/service/server"
 )
 
 // ErrBroadcastRunning is returned when another broadcast is still in flight.
@@ -38,12 +39,16 @@ type PlanStore interface {
 	Reload(ctx context.Context) error
 }
 
-// UserStore persists user rows (usersvc.Service implements it).
+// UserStore persists user rows (usersvc.Service implements it). Credit/Debit
+// are the same atomic + ledger paths orders use, so admin balance adjustments
+// (FR-11, v1.39) stay fully traceable.
 type UserStore interface {
 	SetBanned(ctx context.Context, tgID int64, banned bool) error
 	Get(ctx context.Context, tgID int64) (*postgres.User, error)
 	ListTelegramIDs(ctx context.Context, limit, offset int) ([]int64, error)
 	CountUsers(ctx context.Context) (int64, error)
+	Credit(ctx context.Context, userID int64, amount domain.Money, orderID string) (domain.Money, error)
+	Debit(ctx context.Context, userID int64, amount domain.Money, orderID string) (domain.Money, error)
 }
 
 // BanMarker is the gate-level ban seam (telegramservice.BanService).
@@ -61,13 +66,41 @@ type Messenger interface {
 type BroadcastLocker interface {
 	AcquireLock(ctx context.Context, key string, ttl time.Duration) (bool, error)
 	ReleaseLock(ctx context.Context, key string) error
-} // Service orchestrates FR-11 admin operations.
+}
+
+// ServerOps is the server-management seam (serversvc.Service implements it):
+// list every panel, flip sellable/active flags, add a panel with sealed
+// credentials (FR-11, v1.40).
+type ServerOps interface {
+	ListAll(ctx context.Context) ([]postgres.ServerAdminView, error)
+	SetOpen(ctx context.Context, id int64, open bool) error
+	SetActive(ctx context.Context, id int64, active bool) error
+	AddServer(ctx context.Context, in serversvc.NewServerInput) (int64, error)
+}
+
+// StatsStore is the dashboard aggregation seam (postgres.OrderRepo implements
+// it): order counts + revenue today/total and the recent-orders list (FR-11).
+type StatsStore interface {
+	Stats(ctx context.Context, loc *time.Location) (postgres.OrderStats, error)
+	RecentOrders(ctx context.Context, limit int) ([]postgres.Order, error)
+}
+
+// AuditStore is the admin action trail seam (postgres.AuditRepo implements it).
+type AuditStore interface {
+	Record(ctx context.Context, adminID int64, action, target, detail string) error
+	Recent(ctx context.Context, limit int) ([]postgres.AdminAuditLog, error)
+}
+
+// Service orchestrates FR-11 admin operations.
 type Service struct {
 	plans   PlanStore
 	users   UserStore
 	banner  BanMarker
 	send    Messenger
 	lock    BroadcastLocker
+	servers ServerOps
+	stats   StatsStore
+	audit   AuditStore
 	logger  *slog.Logger
 	chunk   int             // broadcast batch (PRD: 100 msg/chunk)
 	delay   time.Duration   // pause per chunk (PRD: 6 detik)
@@ -75,10 +108,12 @@ type Service struct {
 }
 
 // New builds the admin service. chunk/delay follow PRD FR-11 (100 msg / 6 s)
-// and are kept as fields so tests can shrink them.
-func New(plans PlanStore, users UserStore, banner BanMarker, send Messenger, lock BroadcastLocker, logger *slog.Logger) *Service {
+// and are kept as fields so tests can shrink them. servers, stats and audit
+// may be nil in minimal tests that only exercise pricing/users/broadcast.
+func New(plans PlanStore, users UserStore, banner BanMarker, send Messenger, lock BroadcastLocker, servers ServerOps, stats StatsStore, audit AuditStore, logger *slog.Logger) *Service {
 	return &Service{
 		plans: plans, users: users, banner: banner, send: send, lock: lock,
+		servers: servers, stats: stats, audit: audit,
 		logger: logger, chunk: broadcastChunk, delay: broadcastDelay, baseCtx: context.Background(),
 	}
 }
@@ -100,16 +135,31 @@ func (s *Service) GetPlan(ctx context.Context, country string, days int) (*domai
 	return s.plans.Get(ctx, country, days)
 }
 
-func (s *Service) SetPrice(ctx context.Context, country string, days int, price domain.Money) error {
-	return s.plans.SetPrice(ctx, country, days, price)
+// SetPrice updates a plan price and records the audit trail (FR-11 AC).
+func (s *Service) SetPrice(ctx context.Context, adminID int64, country string, days int, price domain.Money) error {
+	if err := s.plans.SetPrice(ctx, country, days, price); err != nil {
+		return err
+	}
+	s.auditRecord(ctx, adminID, AuditPriceSet, fmt.Sprintf("%s:%d", country, days), price.FormatIDR())
+	return nil
 }
 
-func (s *Service) SetEnabled(ctx context.Context, country string, days int, enabled bool) error {
-	return s.plans.SetEnabled(ctx, country, days, enabled)
+// SetEnabled toggles a plan and records the audit trail (FR-11 AC).
+func (s *Service) SetEnabled(ctx context.Context, adminID int64, country string, days int, enabled bool) error {
+	if err := s.plans.SetEnabled(ctx, country, days, enabled); err != nil {
+		return err
+	}
+	s.auditRecord(ctx, adminID, AuditPlanToggle, fmt.Sprintf("%s:%d", country, days), fmt.Sprintf("enabled=%v", enabled))
+	return nil
 }
 
-func (s *Service) ReloadPricing(ctx context.Context) error {
-	return s.plans.Reload(ctx)
+// ReloadPricing reseeds pricing and records the audit trail (FR-11 AC).
+func (s *Service) ReloadPricing(ctx context.Context, adminID int64) error {
+	if err := s.plans.Reload(ctx); err != nil {
+		return err
+	}
+	s.auditRecord(ctx, adminID, AuditPricingReload, "", "seed file")
+	return nil
 }
 
 // --- users (FR-11) ---
@@ -124,7 +174,8 @@ func (s *Service) LookupUser(ctx context.Context, tgID int64) (*postgres.User, e
 // persistent DB flag (survives Redis flush; blocks the debit guard too).
 // On a DB failure the marker is rolled back so the two layers never diverge
 // (a Redis-only ban would silently revert on the next flush — fix review v1.20).
-func (s *Service) BanUser(ctx context.Context, tgID int64) error {
+// The admin id is recorded in the audit trail (FR-11 AC).
+func (s *Service) BanUser(ctx context.Context, adminID, tgID int64) error {
 	if err := s.banner.Ban(ctx, tgID); err != nil {
 		return fmt.Errorf("setting ban marker: %w", err)
 	}
@@ -132,13 +183,18 @@ func (s *Service) BanUser(ctx context.Context, tgID int64) error {
 		_ = s.banner.Unban(ctx, tgID)
 		return fmt.Errorf("setting ban flag: %w", err)
 	}
+	s.auditRecord(ctx, adminID, AuditUserBan, fmt.Sprintf("%d", tgID), "")
 	return nil
 }
 
-// UnbanUser lifts both layers.
-func (s *Service) UnbanUser(ctx context.Context, tgID int64) error {
+// UnbanUser lifts both layers and records the audit trail (FR-11 AC).
+func (s *Service) UnbanUser(ctx context.Context, adminID, tgID int64) error {
 	if err := s.banner.Unban(ctx, tgID); err != nil {
 		return fmt.Errorf("clearing ban marker: %w", err)
 	}
-	return s.users.SetBanned(ctx, tgID, false)
+	if err := s.users.SetBanned(ctx, tgID, false); err != nil {
+		return err
+	}
+	s.auditRecord(ctx, adminID, AuditUserUnban, fmt.Sprintf("%d", tgID), "")
+	return nil
 }

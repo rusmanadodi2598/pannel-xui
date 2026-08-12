@@ -17,10 +17,12 @@ package telegramhandler
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
+	"github.com/kentangtech/bot-order/internal/service/server"
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
 )
 
@@ -31,16 +33,30 @@ type Admin struct {
 }
 
 // AdminOps is the admin side-effect seam (adminsvc.Service implements it).
+// Mutating methods carry adminID (the acting Telegram id) so every action is
+// recorded in the audit trail (FR-11 AC, v1.40).
 type AdminOps interface {
 	ListPlans(ctx context.Context) ([]domain.VpnPlan, error)
 	GetPlan(ctx context.Context, country string, days int) (*domain.VpnPlan, error)
-	SetPrice(ctx context.Context, country string, days int, price domain.Money) error
-	SetEnabled(ctx context.Context, country string, days int, enabled bool) error
-	ReloadPricing(ctx context.Context) error
+	SetPrice(ctx context.Context, adminID int64, country string, days int, price domain.Money) error
+	SetEnabled(ctx context.Context, adminID int64, country string, days int, enabled bool) error
+	ReloadPricing(ctx context.Context, adminID int64) error
 	LookupUser(ctx context.Context, tgID int64) (*postgres.User, error)
-	BanUser(ctx context.Context, tgID int64) error
-	UnbanUser(ctx context.Context, tgID int64) error
+	BanUser(ctx context.Context, adminID, tgID int64) error
+	UnbanUser(ctx context.Context, adminID, tgID int64) error
 	Broadcast(ctx context.Context, adminChatID int64, text string) (int, error)
+	// AdjustBalance credits (credit=true) or debits (credit=false) a user's
+	// balance atomically + ledgered (FR-11, v1.39). Returns the new balance.
+	AdjustBalance(ctx context.Context, adminID, tgID int64, amount domain.Money, credit bool) (domain.Money, error)
+	// Server management (FR-11, v1.40).
+	ListServers(ctx context.Context) ([]postgres.ServerAdminView, error)
+	ToggleServerOpen(ctx context.Context, adminID, serverID int64, open bool) error
+	ToggleServerActive(ctx context.Context, adminID, serverID int64, active bool) error
+	AddServer(ctx context.Context, adminID int64, in serversvc.NewServerInput) (int64, error)
+	// Statistik & audit (FR-11, v1.40).
+	Stats(ctx context.Context, loc *time.Location) (postgres.OrderStats, error)
+	RecentOrders(ctx context.Context, limit int) ([]postgres.Order, error)
+	AuditLog(ctx context.Context, limit int) ([]postgres.AdminAuditLog, error)
 }
 
 // AdminFSM persists admin free-text input state (redis.AdminFSM).
@@ -101,6 +117,41 @@ func (d *Dispatcher) routeAdmin(ctx context.Context, cb *models.CallbackQuery) {
 		d.adminUnbanPrompt(ctx, cb)
 	case strings.HasPrefix(data, telegramservice.PrefixAdminUnbanConfirm):
 		d.adminUnbanConfirm(ctx, cb, strings.TrimPrefix(data, telegramservice.PrefixAdminUnbanConfirm))
+	case data == telegramservice.CallbackAdminSaldo:
+		d.adminSaldoMenu(ctx, cb)
+	case data == telegramservice.PrefixAdminSaldoKredit:
+		d.adminSaldoArm(ctx, cb, true)
+	case data == telegramservice.PrefixAdminSaldoDebit:
+		d.adminSaldoArm(ctx, cb, false)
+	case strings.HasPrefix(data, telegramservice.PrefixAdminSaldoConfirm):
+		// Format: admin:saldo:confirm:{kredit|debit}:{tgid}:{amount}
+		raw := strings.TrimPrefix(data, telegramservice.PrefixAdminSaldoConfirm)
+		credit, payload, ok := strings.Cut(raw, ":")
+		if !ok {
+			d.answer(ctx, cb.ID, telegramservice.UnavailableText())
+			return
+		}
+		d.adminSaldoConfirm(ctx, cb, credit == "kredit", payload)
+	case data == telegramservice.CallbackAdminServers:
+		d.adminServers(ctx, cb)
+	case data == telegramservice.CallbackAdminServerAdd:
+		d.adminServerAddArm(ctx, cb)
+	case data == telegramservice.CallbackAdminServerAddConfirm:
+		d.adminServerAddConfirm(ctx, cb)
+	// Order matters: open/active prefixes are more specific than the generic
+	// server prefix (admin:server:open:3 vs admin:server:3).
+	case strings.HasPrefix(data, telegramservice.PrefixAdminServerOpen):
+		d.adminServerToggle(ctx, cb, strings.TrimPrefix(data, telegramservice.PrefixAdminServerOpen), true)
+	case strings.HasPrefix(data, telegramservice.PrefixAdminServerActive):
+		d.adminServerToggle(ctx, cb, strings.TrimPrefix(data, telegramservice.PrefixAdminServerActive), false)
+	case strings.HasPrefix(data, telegramservice.PrefixAdminServer):
+		d.adminServerDetail(ctx, cb, strings.TrimPrefix(data, telegramservice.PrefixAdminServer))
+	case data == telegramservice.CallbackAdminStats:
+		d.adminStats(ctx, cb)
+	case data == telegramservice.CallbackAdminRecentOrders:
+		d.adminRecentOrders(ctx, cb)
+	case data == telegramservice.CallbackAdminAudit:
+		d.adminAudit(ctx, cb)
 	default:
 		d.answer(ctx, cb.ID, telegramservice.UnavailableText())
 	}
@@ -168,7 +219,7 @@ func (d *Dispatcher) adminToggle(ctx context.Context, cb *models.CallbackQuery, 
 		d.answer(ctx, cb.ID, "Paket tidak ditemukan.")
 		return
 	}
-	if err := d.admin.Ops.SetEnabled(ctx, country, days, !plan.Enabled); err != nil {
+	if err := d.admin.Ops.SetEnabled(ctx, cb.From.ID, country, days, !plan.Enabled); err != nil {
 		d.logger.Error("admin toggle failed", "country", country, "days", days, "error", err)
 		d.answer(ctx, cb.ID, "Gagal mengubah status paket.")
 		return
@@ -179,7 +230,7 @@ func (d *Dispatcher) adminToggle(ctx context.Context, cb *models.CallbackQuery, 
 
 // adminReload reseeds pricing from the seed file.
 func (d *Dispatcher) adminReload(ctx context.Context, cb *models.CallbackQuery) {
-	if err := d.admin.Ops.ReloadPricing(ctx); err != nil {
+	if err := d.admin.Ops.ReloadPricing(ctx, cb.From.ID); err != nil {
 		d.logger.Error("admin reload pricing failed", "error", err)
 		d.answer(ctx, cb.ID, "Gagal reload pricing.")
 		return

@@ -29,13 +29,13 @@ func TestHomeKeyboard_GivenLayout_ThenSevenButtonsInOrder(t *testing.T) {
 		}
 	}
 	want := []string{
-		"🛒 Beli VPN=buy:menu",
-		"🔄 Perpanjang=renew:menu",
-		"👤 Akun Saya=account:menu",
-		"💳 Top Up=topup:menu",
-		"🎁 Trial=trial:menu",
-		"📜 Riwayat=history:menu",
-		"ℹ️ Bantuan=help:menu",
+		"Beli VPN=buy:menu",
+		"Perpanjang=renew:menu",
+		"Akun Saya=account:menu",
+		"Top Up=topup:menu",
+		"Trial=trial:menu",
+		"Riwayat=history:menu",
+		"Bantuan=help:menu",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("buttons = %d, want %d", len(got), len(want))
@@ -53,11 +53,11 @@ func TestJoinKeyboard_GivenLink_ThenLinkAndRecheckButtons(t *testing.T) {
 		t.Fatalf("JoinKeyboard must return InlineKeyboardMarkup")
 	}
 	link := kb.InlineKeyboard[0][0]
-	if link.Text != "🔗 Join Grup" || link.URL != "https://t.me/kentangtech" {
+	if link.Text != "Join Grup ↗" || link.URL != "https://t.me/kentangtech" {
 		t.Errorf("link button = %+v", link)
 	}
 	recheck := kb.InlineKeyboard[1][0]
-	if recheck.Text != "✅ Sudah Join" || recheck.CallbackData != CallbackGateCheck {
+	if recheck.Text != "Sudah Join ✓" || recheck.CallbackData != CallbackGateCheck {
 		t.Errorf("recheck button = %+v", recheck)
 	}
 }
@@ -78,8 +78,8 @@ func TestJoinKeyboard_GivenEmptyLink_ThenOnlyRecheckButton(t *testing.T) {
 
 func TestHomeText_GivenName_ThenGreets(t *testing.T) {
 	text := HomeText("Dodi")
-	if !strings.Contains(text, "Dodi") || !strings.Contains(text, "KentangTech") {
-		t.Errorf("HomeText missing greeting: %s", text)
+	if !strings.Contains(text, "Dodi") || !strings.Contains(text, BrandName) {
+		t.Errorf("HomeText missing greeting/brand: %s", text)
 	}
 }
 

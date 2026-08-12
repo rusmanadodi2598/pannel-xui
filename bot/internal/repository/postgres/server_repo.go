@@ -59,12 +59,16 @@ func (r *ServerRepo) UpsertSeed(ctx context.Context, s VPNServer) error {
 }
 
 // ListBuyable returns active & open panels for the buy menu (FR-03, FR-10),
-// ordered by country then priority — never exposes credentials.
+// ordered by country then priority — never exposes credentials. Panels marked
+// "down" by the health-check worker are excluded: server mati tidak dijual
+// (PRD §17). Any other health (NULL, default 'unknown', 'ok') stays sellable
+// so a fresh boot before the first health sweep is not hidden.
 func (r *ServerRepo) ListBuyable(ctx context.Context) ([]ServerView, error) {
 	var rows []ServerView
 	err := r.db.WithContext(ctx).Table("vpn_servers").
 		Select("id, name, flag_emoji, country_code, location, protocols").
-		Where("is_active = true AND is_open = true").
+		Where("is_active = true AND is_open = true" +
+			" AND health_status IS DISTINCT FROM 'down'").
 		Order("country_code, priority DESC, id").
 		Scan(&rows).Error
 	if err != nil {

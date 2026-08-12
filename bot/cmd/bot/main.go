@@ -166,11 +166,20 @@ func run() error {
 	// M6 (PRD §16.2): sinkron traffic XUI → vpn_clients — worker interval;
 	// per-server timeout + satu panel gagal tidak menggagalkan sweep.
 	if cfg.TrafficSyncEnabled {
-		trafficWG := startTrafficSync(ctx, cfg, db, bundle, logger)
-		defer func() {
-			stop()
-			trafficWG.Wait()
-		}()
+		trafficWG := startTrafficSync(ctx, cfg, bundle.Traffic, logger)
+		defer func() { stop(); trafficWG.Wait() }()
+	}
+
+	// M7 (PRD §17): health check panel — server mati tidak dijual.
+	if cfg.HealthCheckEnabled {
+		healthWG := startHealthCheck(ctx, cfg, bundle.Health, logger)
+		defer func() { stop(); healthWG.Wait() }()
+	}
+
+	// M7 (PRD worker): trial cleanup — disable akun trial expired di panel.
+	if cfg.TrialCleanupEnabled {
+		cleanupWG := startTrialCleanup(ctx, cfg, bundle.TrialCleanup, logger)
+		defer func() { stop(); cleanupWG.Wait() }()
 	}
 
 	// M5: topup flow (FR-06) — menus live, payment API deferred behind a stub

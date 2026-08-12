@@ -24,6 +24,7 @@ type API interface {
 	SendMessage(ctx context.Context, chatID int64, text string, parseMode models.ParseMode, markup models.ReplyMarkup) error
 	EditMessageText(ctx context.Context, chatID int64, messageID int, text string, parseMode models.ParseMode, markup models.ReplyMarkup) error
 	AnswerCallbackQuery(ctx context.Context, callbackID, text string) error
+	SendDocument(ctx context.Context, chatID int64, filename string, content []byte, caption string) error
 }
 
 // GateChecker is the membership gate seam (telegramservice.GateService).
@@ -187,7 +188,8 @@ func (d *Dispatcher) handleCallback(ctx context.Context, cb *models.CallbackQuer
 		}
 		d.answer(ctx, cb.ID, telegramservice.UnavailableText())
 	case strings.HasPrefix(cb.Data, "buy:") || strings.HasPrefix(cb.Data, "renew:") ||
-		cb.Data == telegramservice.CallbackAccount:
+		cb.Data == telegramservice.CallbackAccount || strings.HasPrefix(cb.Data, "account:") ||
+		strings.HasPrefix(cb.Data, "history:"):
 		if d.shop != nil {
 			d.routeShop(ctx, cb)
 			return
@@ -200,6 +202,9 @@ func (d *Dispatcher) handleCallback(ctx context.Context, cb *models.CallbackQuer
 			return
 		}
 		d.answer(ctx, cb.ID, telegramservice.UnavailableText())
+	case strings.HasPrefix(cb.Data, telegramservice.PrefixHelp):
+		// FR-15: static help/ToS content — no service seam (edit-in-place).
+		d.handleHelp(ctx, cb, cb.Data)
 	case strings.HasPrefix(cb.Data, "admin:"):
 		// FR-11: admin panel (nil-safe; non-admins are denied inside routeAdmin).
 		if d.admin != nil {

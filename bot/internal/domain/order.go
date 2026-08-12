@@ -25,6 +25,7 @@ const (
 	OrderCompleted  OrderStatus = "completed"  // akun dibuat, saldo didebit
 	OrderFailed     OrderStatus = "failed"     // error panel, saldo TIDAK didebit
 	OrderCancelled  OrderStatus = "cancelled"  // dibatalkan user (input FSM)
+	OrderRefunded   OrderStatus = "refunded"   // dikembalikan (PRD §13.4; label defensif — tidak diproduksi saat ini)
 )
 
 // OrderType discriminates the order kind (§13.4).
@@ -35,6 +36,9 @@ const (
 	OrderTypeRenewal  OrderType = "renewal"
 	OrderTypeTopup    OrderType = "topup"
 	OrderTypeTrial    OrderType = "trial"
+	// OrderTypeDeletion records an account deletion (FR-08 AC-4): a
+	// zero-amount, completed order row so the action shows in Riwayat (FR-14).
+	OrderTypeDeletion OrderType = "deletion"
 )
 
 // TransitionResult describes a valid state move.
@@ -84,6 +88,26 @@ func NewOrder(orderID string, typ OrderType, userID, serverID int64, protocol st
 		Currency:     "IDR",
 		Status:       OrderPending,
 		CreatedAt:    time.Now(),
+	}
+}
+
+// NewDeletionRecord builds the account-deletion history row (FR-08 AC-4).
+// Deletions have no fulfillment lifecycle and no balance movement — the
+// factory creates the record already completed (initial state, not a
+// transition) so it lands in the user's Riwayat without touching the FSM.
+func NewDeletionRecord(orderID string, userID, serverID int64, protocol, email string) *Order {
+	now := time.Now()
+	return &Order{
+		OrderID:      orderID,
+		Type:         OrderTypeDeletion,
+		UserID:       userID,
+		ServerID:     serverID,
+		Protocol:     protocol,
+		AccountEmail: email,
+		Currency:     "IDR",
+		Status:       OrderCompleted,
+		CompletedAt:  &now,
+		CreatedAt:    now,
 	}
 }
 
@@ -144,6 +168,8 @@ func ParseOrderType(raw string) (OrderType, error) {
 		return OrderTypeTopup, nil
 	case OrderTypeTrial:
 		return OrderTypeTrial, nil
+	case OrderTypeDeletion:
+		return OrderTypeDeletion, nil
 	default:
 		return "", fmt.Errorf("unknown order type %q", raw)
 	}

@@ -51,13 +51,23 @@ func (f *fakePlans) SetEnabled(context.Context, string, int, bool) error {
 func (f *fakePlans) Reload(context.Context) error { return f.err }
 
 type fakeUsers struct {
-	mu       sync.Mutex
-	total    int64
-	ids      []int64
-	banned   []int64
-	unbanned []int64
-	user     *postgres.User
-	err      error
+	mu        sync.Mutex
+	total     int64
+	ids       []int64
+	banned    []int64
+	unbanned  []int64
+	user      *postgres.User
+	err       error
+	credited  []adjustMove
+	debited   []adjustMove
+	creditErr error
+	debitErr  error
+}
+
+type adjustMove struct {
+	userID  int64
+	amount  domain.Money
+	orderID string
 }
 
 func (f *fakeUsers) SetBanned(_ context.Context, tgID int64, banned bool) error {
@@ -71,6 +81,24 @@ func (f *fakeUsers) SetBanned(_ context.Context, tgID int64, banned bool) error 
 	return f.err
 }
 func (f *fakeUsers) Get(context.Context, int64) (*postgres.User, error) { return f.user, f.err }
+func (f *fakeUsers) Credit(_ context.Context, userID int64, amount domain.Money, orderID string) (domain.Money, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.creditErr != nil {
+		return 0, f.creditErr
+	}
+	f.credited = append(f.credited, adjustMove{userID, amount, orderID})
+	return f.user.Balance + amount, nil
+}
+func (f *fakeUsers) Debit(_ context.Context, userID int64, amount domain.Money, orderID string) (domain.Money, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.debitErr != nil {
+		return 0, f.debitErr
+	}
+	f.debited = append(f.debited, adjustMove{userID, amount, orderID})
+	return f.user.Balance - amount, nil
+}
 func (f *fakeUsers) ListTelegramIDs(_ context.Context, limit, offset int) ([]int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -155,7 +183,7 @@ func (f *fakeLocker) releaseCount() int {
 
 // newTestService builds a service with small chunk and no delay for tests.
 func newTestService(users *fakeUsers, sender *fakeSender, locker *fakeLocker) *Service {
-	s := New(&fakePlans{}, users, &fakeBanner{}, sender, locker, testLogger())
+	s := New(&fakePlans{}, users, &fakeBanner{}, sender, locker, &fakeServerOps{}, &fakeStats{}, &fakeAudit{}, testLogger())
 	s.chunk = 2
 	s.delay = 0
 	return s

@@ -29,6 +29,7 @@ type fakeAPI struct {
 	formValues map[string]string
 	lastMethod string
 	lastPath   string
+	lastFile   string
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -39,6 +40,13 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 		_ = r.ParseMultipartForm(1 << 20)
 		for k, v := range r.Form {
 			f.formValues[k] = v[0]
+		}
+		if r.MultipartForm != nil {
+			for name, files := range r.MultipartForm.File {
+				if len(files) > 0 {
+					f.lastFile = name + "=" + files[0].Filename
+				}
+			}
 		}
 		f.lastMethod = r.Method
 		f.lastPath = r.URL.Path
@@ -62,7 +70,8 @@ func (f *fakeAPI) route(path string) any {
 		return true
 	case strings.HasSuffix(path, "/getWebhookInfo"):
 		return map[string]any{"url": "https://bot-xui.kentangtechstore.com/api/v1/webhooks/telegram", "pending_update_count": 3}
-	case strings.HasSuffix(path, "/sendMessage"), strings.HasSuffix(path, "/editMessageText"):
+	case strings.HasSuffix(path, "/sendMessage"), strings.HasSuffix(path, "/editMessageText"),
+		strings.HasSuffix(path, "/sendDocument"):
 		return map[string]any{"message_id": 1, "chat": map[string]any{"id": 42, "type": "private"}}
 	case strings.HasSuffix(path, "/answerCallbackQuery"):
 		return true
@@ -160,5 +169,22 @@ func TestAnswerCallbackQuery_GivenNoop_ThenSucceeds(t *testing.T) {
 	}
 	if f.formValues["callback_query_id"] != "cb-1" || f.formValues["text"] != "ok" {
 		t.Errorf("payload = %+v", f.formValues)
+	}
+}
+
+func TestSendDocument_GivenTXTBytes_ThenMultipartUpload(t *testing.T) {
+	c, f := newTestClient(t)
+	content := []byte("=== AKUN VPN ===\nvless://u@h:443")
+	if err := c.SendDocument(context.Background(), 42, "akun-a-at-vpn-kt.txt", content, "Akun VPN kamu"); err != nil {
+		t.Fatalf("SendDocument: %v", err)
+	}
+	if !strings.HasSuffix(f.lastPath, "/sendDocument") {
+		t.Fatalf("path = %s, want sendDocument", f.lastPath)
+	}
+	if f.formValues["chat_id"] != "42" || f.formValues["caption"] != "Akun VPN kamu" {
+		t.Errorf("form = %+v", f.formValues)
+	}
+	if f.lastFile != "document=akun-a-at-vpn-kt.txt" {
+		t.Errorf("uploaded file = %q, want document=akun-a-at-vpn-kt.txt", f.lastFile)
 	}
 }

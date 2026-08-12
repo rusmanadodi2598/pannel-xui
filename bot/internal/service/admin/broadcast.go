@@ -50,6 +50,7 @@ func (s *Service) Broadcast(ctx context.Context, adminChatID int64, text string)
 	if !locked {
 		return 0, ErrBroadcastRunning
 	}
+	s.auditRecord(ctx, adminChatID, AuditBroadcastStart, fmt.Sprintf("%d", total), "")
 	go s.runBroadcast(adminChatID, text, total)
 	return int(total), nil
 }

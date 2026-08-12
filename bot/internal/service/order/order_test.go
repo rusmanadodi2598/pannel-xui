@@ -29,7 +29,7 @@ func TestPurchase_GivenSufficientBalance_ThenCompletedAndDebited(t *testing.T) {
 	store.panels.created = domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
-	res, err := svc.Purchase(context.Background(), user, "ID", 30)
+	res, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless")
 	if err != nil {
 		t.Fatalf("Purchase: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestPurchase_GivenPanelError_ThenFailedWithoutDebit(t *testing.T) {
 	store.panels.createErr = errors.New("panel unreachable")
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
-	_, err := svc.Purchase(context.Background(), user, "ID", 30)
+	_, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless")
 	if !errors.Is(err, ErrFulfillFailed) {
 		t.Fatalf("err = %v, want ErrFulfillFailed", err)
 	}
@@ -85,7 +85,7 @@ func TestPurchase_GivenInsufficientBalance_ThenRejectedBeforeOrder(t *testing.T)
 	store.servers.serverID = 5
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
-	_, err := svc.Purchase(context.Background(), user, "ID", 30)
+	_, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless")
 	if !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("err = %v, want ErrInsufficientBalance", err)
 	}
@@ -100,7 +100,7 @@ func TestPurchase_GivenPlanMissing_ThenErrPlanNotFound(t *testing.T) {
 	store.plans.err = ErrPlanNotFound
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
-	if _, err := svc.Purchase(context.Background(), user, "ID", 30); !errors.Is(err, ErrPlanNotFound) {
+	if _, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless"); !errors.Is(err, ErrPlanNotFound) {
 		t.Fatalf("err = %v, want ErrPlanNotFound", err)
 	}
 }
@@ -115,7 +115,7 @@ func TestPurchase_GivenDebitError_ThenFailedWithClientRecordedButNoDebit(t *test
 	store.users.debitErr = errors.New("db down")
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
-	_, err := svc.Purchase(context.Background(), user, "ID", 30)
+	_, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless")
 	if !errors.Is(err, ErrFulfillFailed) {
 		t.Fatalf("err = %v, want ErrFulfillFailed", err)
 	}
@@ -138,7 +138,7 @@ func TestPurchase_GivenNoServer_ThenErrNoServer(t *testing.T) {
 	store.servers.err = ErrNoServer
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
-	if _, err := svc.Purchase(context.Background(), user, "SG", 15); !errors.Is(err, ErrNoServer) {
+	if _, err := svc.Purchase(context.Background(), user, "SG", 15, 0, 0, "vless"); !errors.Is(err, ErrNoServer) {
 		t.Fatalf("err = %v, want ErrNoServer", err)
 	}
 }
@@ -170,6 +170,11 @@ func TestRenew_GivenOwnedClient_ThenExpiryExtendedFromRemaining(t *testing.T) {
 	}
 	if !store.panels.renewCalled {
 		t.Error("panel renew must be called")
+	}
+	// v1.37 debit-first: money moves before the panel call, so a failed panel
+	// renewal can always be refunded exactly.
+	if !store.debitBeforePanel {
+		t.Error("debit must happen BEFORE the panel call (v1.37 renewal ordering)")
 	}
 	wantExpiry := future.AddDate(0, 0, 30)
 	if store.clients.expiryUpdated == nil || !store.clients.expiryUpdated.Equal(wantExpiry) {

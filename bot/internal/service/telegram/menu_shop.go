@@ -20,148 +20,77 @@ import (
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 )
 
-// Shop callback data contract (prefix + payload, M4).
-const (
-	CallbackBuyBack   = "buy:back"
-	CallbackRenewBack = "renew:back"
-
-	// Prefixes for parameterised callbacks (exported for the handler layer).
-	PrefixBuyCountry   = "buy:country:"
-	PrefixBuyPlan      = "buy:plan:"
-	PrefixBuyConfirm   = "buy:confirm:"
-	PrefixRenewClient  = "renew:client:"
-	PrefixRenewPlan    = "renew:plan:"
-	PrefixRenewConfirm = "renew:confirm:"
-	PrefixAccountView  = "account:view:"
-)
-
-// CountryOption is one buyable country button.
-type CountryOption struct {
-	Code string
-	Flag string
-	Name string
-}
-
-// BuyCountriesKeyboard renders the FR-03 step-1 country picker.
-func BuyCountriesKeyboard(countries []CountryOption) models.ReplyMarkup {
-	rows := make([][]models.InlineKeyboardButton, 0, len(countries)+1)
-	for _, c := range countries {
-		label := c.Flag + " " + c.Name
-		if c.Flag == "" {
-			label = "🌐 " + c.Name
-		}
-		rows = append(rows, []models.InlineKeyboardButton{{
-			Text: label, CallbackData: PrefixBuyCountry + c.Code,
-		}})
-	}
-	rows = append(rows, backRow(CallbackBuyBack, "🏠 Menu Utama"))
-	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
-}
-
-// BuyPlansKeyboard renders the FR-03 step-2 plan picker for one country.
-func BuyPlansKeyboard(plans []domain.VpnPlan) models.ReplyMarkup {
-	rows := make([][]models.InlineKeyboardButton, 0, len(plans)+1)
-	for _, p := range plans {
-		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         fmt.Sprintf("%d Hari — %s", p.Days, p.Price.FormatIDR()),
-			CallbackData: PrefixBuyPlan + p.CountryCode + ":" + fmt.Sprintf("%d", p.Days),
-		}})
-	}
-	rows = append(rows, backRow(CallbackBuyBack, "⬅️ Kembali"))
-	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
-}
-
-// BuyConfirmKeyboard offers explicit confirmation (FR-03 AC: order only after confirm).
-func BuyConfirmKeyboard(country string, days int) models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "✅ Konfirmasi Beli", CallbackData: PrefixBuyConfirm + country + ":" + fmt.Sprintf("%d", days)}},
-		backRow(CallbackBuyBack, "⬅️ Kembali"),
-	}}
-}
-
-// RenewClientsKeyboard lists the user's active accounts for renewal (FR-05).
+// RenewClientsKeyboard lists the user's active accounts for renewal (FR-05,
+// 2-1-2-1 zigzag).
 func RenewClientsKeyboard(clients []postgres.ClientView) models.ReplyMarkup {
-	rows := make([][]models.InlineKeyboardButton, 0, len(clients)+1)
+	buttons := make([]models.InlineKeyboardButton, 0, len(clients)+1)
 	for _, c := range clients {
-		rows = append(rows, []models.InlineKeyboardButton{{
+		buttons = append(buttons, models.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%s %s — %s", flagOrGlobe(c.FlagEmoji), c.ServerName, shortEmail(c.Email)),
 			CallbackData: PrefixRenewClient + fmt.Sprintf("%d", c.ID),
-		}})
+		})
 	}
-	rows = append(rows, backRow(CallbackRenewBack, "🏠 Menu Utama"))
-	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	buttons = append(buttons, backBtn(CallbackRenewBack, "🏠 Menu Utama"))
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(buttons...)}
 }
 
 // RenewPlanKeyboard reuses the plan list, encoded with the client id prefix.
 func RenewPlanKeyboard(clientID int64, plans []domain.VpnPlan) models.ReplyMarkup {
-	rows := make([][]models.InlineKeyboardButton, 0, len(plans)+1)
+	buttons := make([]models.InlineKeyboardButton, 0, len(plans)+1)
 	for _, p := range plans {
-		rows = append(rows, []models.InlineKeyboardButton{{
+		buttons = append(buttons, models.InlineKeyboardButton{
 			Text: fmt.Sprintf("%d Hari — %s", p.Days, p.Price.FormatIDR()),
 			CallbackData: PrefixRenewPlan + fmt.Sprintf("%d", clientID) + ":" +
 				p.CountryCode + ":" + fmt.Sprintf("%d", p.Days),
-		}})
+		})
 	}
-	rows = append(rows, backRow(CallbackRenewBack, "⬅️ Kembali"))
-	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	buttons = append(buttons, backBtn(CallbackRenewBack, "⬅️ Kembali"))
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(buttons...)}
 }
 
 // RenewConfirmKeyboard asks explicit confirmation for a renewal.
 func RenewConfirmKeyboard(clientID int64, country string, days int) models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "✅ Konfirmasi Perpanjang", CallbackData: PrefixRenewConfirm +
-			fmt.Sprintf("%d", clientID) + ":" + country + ":" + fmt.Sprintf("%d", days)}},
-		backRow(CallbackRenewBack, "⬅️ Kembali"),
-	}}
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(
+		models.InlineKeyboardButton{Text: "Konfirmasi Perpanjang", CallbackData: PrefixRenewConfirm +
+			fmt.Sprintf("%d", clientID) + ":" + country + ":" + fmt.Sprintf("%d", days)},
+		backBtn(CallbackRenewBack, "⬅️ Kembali"),
+	)}
 }
 
-// backRow is a single centered back/home button.
+// backRow is a single centered back/home button (slice shape for fixed-row
+// keyboards; backBtn is the single-button shape for the zigzag packer).
 func backRow(callback, label string) []models.InlineKeyboardButton {
-	return []models.InlineKeyboardButton{{Text: label, CallbackData: callback}}
+	return []models.InlineKeyboardButton{backBtn(callback, label)}
 }
 
-// BuyCountryText introduces the country step (FR-03).
-func BuyCountryText() string {
-	return "Pilih negara server:\n\nPilih lokasi server VPN yang kamu mau."
-}
-
-// BuyPlanListText introduces the plan step.
-func BuyPlanListText(countryName string) string {
-	return fmt.Sprintf("Pilih paket untuk %s:\n\nHarga selalu update dari daftar harga terbaru.", countryName)
-}
-
-// BuyConfirmText summarizes the order before confirmation (FR-03 AC).
-func BuyConfirmText(plan domain.VpnPlan, balance domain.Money) string {
-	var warn string
-	if balance < plan.Price {
-		warn = fmt.Sprintf("\n\nSaldo kamu %s — tidak cukup untuk paket ini.\nSilakan top up dulu ya.", balance.FormatIDR())
-	} else {
-		warn = fmt.Sprintf("\n\nSaldo kamu: %s (cukup)", balance.FormatIDR())
-	}
-	return fmt.Sprintf("Ringkasan Pesanan\n━━━━━━━━━━━━━━\n"+
-		"Negara: %s\n"+
-		"Paket: VPN %s %d Hari\n"+
-		"Harga: %s\n"+
-		"Kuota: 100 GB / 1 IP\n━━━━━━━━━━━━━━%s\n\n"+
-		"Tekan Konfirmasi untuk memproses order.",
-		plan.CountryName, plan.CountryName, plan.Days, plan.Price.FormatIDR(), warn)
-}
-
-// BuySuccessText reports a completed purchase (FR-04 AC-2).
+// BuySuccessText reports a completed purchase (FR-04 AC-2, branded banner
+// v1.43). The import URL is intentionally NOT rendered here (v1.36) — it
+// lives only in the .txt export, which the keyboard below offers right after
+// this message.
 func BuySuccessText(orderID, email string, days int, balance domain.Money, countryName string) string {
-	return fmt.Sprintf("Order Berhasil\n━━━━━━━━━━━━━━\n"+
+	return fmt.Sprintf(BrandHeader()+"\n\nOrder Berhasil\n━━━━━━━━━━━━━━\n"+
 		"Order ID: %s\n"+
 		"Server: %s\n"+
 		"Masa aktif: %d Hari\n"+
 		"Email akun: %s\n"+
-		"Sisa saldo: %s\n━━━━━━━━━━━━━━\n\n"+
-		"Detail koneksi (config link) akan tersedia di menu Akun Saya.",
-		orderID, countryName, days, email, balance.FormatIDR())
+		"Sisa saldo: %s\n━━━━━━━━━━━━━━\n\n%s",
+		orderID, countryName, days, email, balance.FormatIDR(), exportHintText)
 }
 
-// BuyFailedText reports a failed purchase with a friendly reason.
+// BuySuccessKeyboard offers the v2Ray config view, export + home after a
+// purchase (M7 + v1.26, 2-1-2-1 zigzag).
+func BuySuccessKeyboard(clientID int64) models.ReplyMarkup {
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(
+		models.InlineKeyboardButton{Text: "Config V2Ray", CallbackData: PrefixAccountConfig + fmt.Sprintf("%d", clientID)},
+		models.InlineKeyboardButton{Text: "Ekspor .txt", CallbackData: PrefixAccountExport + fmt.Sprintf("%d", clientID)},
+		backBtn(CallbackHome, "🏠 Menu Utama"),
+	)}
+}
+
+// BuyFailedText reports a failed purchase with a friendly reason (branded
+// banner v1.44).
 func BuyFailedText(orderID, reason string) string {
-	return fmt.Sprintf("Order Gagal\n━━━━━━━━━━━━━━\nOrder ID: %s\n\n%s\n\n"+
+	return fmt.Sprintf(BrandHeader()+"\n\nOrder Gagal\n━━━━━━━━━━━━━━\nOrder ID: %s\n\n%s\n\n"+
 		"Saldo kamu tidak dipotong. Silakan coba lagi.", orderID, reason)
 }
 
@@ -175,7 +104,8 @@ func RenewClientListText() string {
 	return "Pilih akun yang mau diperpanjang:\n\nMasa aktif akan ditambahkan dari sisa waktu akun."
 }
 
-// RenewConfirmText summarizes a renewal before confirmation (FR-05 AC).
+// RenewConfirmText summarizes a renewal before confirmation (FR-05 AC,
+// branded banner v1.44).
 func RenewConfirmText(client postgres.ClientView, plan domain.VpnPlan, balance domain.Money) string {
 	var warn string
 	if balance < plan.Price {
@@ -183,7 +113,7 @@ func RenewConfirmText(client postgres.ClientView, plan domain.VpnPlan, balance d
 	} else {
 		warn = fmt.Sprintf("\n\nSaldo kamu: %s (cukup)", balance.FormatIDR())
 	}
-	return fmt.Sprintf("Ringkasan Perpanjangan\n━━━━━━━━━━━━━━\n"+
+	return fmt.Sprintf(BrandHeader()+"\n\nRingkasan Perpanjangan\n━━━━━━━━━━━━━━\n"+
 		"Akun: %s\n"+
 		"Paket: %d Hari\n"+
 		"Harga: %s\n━━━━━━━━━━━━━━%s\n\n"+
@@ -191,9 +121,10 @@ func RenewConfirmText(client postgres.ClientView, plan domain.VpnPlan, balance d
 		client.Email, plan.Days, plan.Price.FormatIDR(), warn)
 }
 
-// RenewSuccessText reports a completed renewal with the new expiry.
+// RenewSuccessText reports a completed renewal with the new expiry (branded
+// banner v1.43).
 func RenewSuccessText(orderID, email string, days int, newExpiry time.Time, balance domain.Money) string {
-	return fmt.Sprintf("Perpanjangan Berhasil\n━━━━━━━━━━━━━━\n"+
+	return fmt.Sprintf(BrandHeader()+"\n\nPerpanjangan Berhasil\n━━━━━━━━━━━━━━\n"+
 		"Order ID: %s\n"+
 		"Akun: %s\n"+
 		"Masa aktif bertambah %d Hari\n"+
@@ -202,33 +133,69 @@ func RenewSuccessText(orderID, email string, days int, newExpiry time.Time, bala
 		orderID, email, days, newExpiry.Format("02 Jan 2006"), balance.FormatIDR())
 }
 
-// AccountsText renders the FR-08 account list (M4 subset: no pagination yet).
-func AccountsText(clients []postgres.ClientView, now time.Time) string {
+// AccountsText renders one page of the FR-08 account list (5/page, newest
+// first). Empty state prompts a purchase; the header shows the current page.
+func AccountsText(clients []postgres.ClientView, page, totalPages int, now time.Time) string {
 	if len(clients) == 0 {
 		return "Kamu belum punya akun VPN.\n\nSilakan beli dulu di menu Beli VPN."
 	}
 	var b strings.Builder
-	b.WriteString("Akun Saya\n━━━━━━━━━━━━━━\n")
+	b.WriteString(fmt.Sprintf("Akun Saya\n━━━━━━━━━━━━━━\nHalaman %d dari %d\n", page, totalPages))
 	for i, c := range clients {
-		status := "Aktif"
-		if c.IsExpired || (c.ExpiresAt != nil && !c.ExpiresAt.After(now)) {
-			status = "Expired"
-		}
 		b.WriteString(fmt.Sprintf("\n%d. %s\n", i+1, c.ServerName))
 		b.WriteString(fmt.Sprintf("   %s\n", c.Email))
 		b.WriteString(fmt.Sprintf("   %s\n", strings.ToUpper(c.Protocol)))
-		b.WriteString(fmt.Sprintf("   %s\n", status))
+		badge := ""
+		if c.IsTrial {
+			badge = "Trial · " // badge teks polos (icon policy) — parity AC-1 tanpa emoji
+		}
+		b.WriteString(fmt.Sprintf("   %s%s\n", badge, accountListStatus(c, now)))
 		if c.ExpiresAt != nil {
-			remain := c.ExpiresAt.Sub(now)
-			if remain > 0 {
-				b.WriteString(fmt.Sprintf("   sisa %d hari\n", int(remain.Hours()/24)+1))
-			} else {
-				b.WriteString("   sudah habis\n")
-			}
+			b.WriteString("   " + accountRemaining(c, now) + "\n")
 		}
 	}
-	b.WriteString("━━━━━━━━━━━━━━\n\nDetail & config link menyusul di milestone berikutnya.")
+	b.WriteString("━━━━━━━━━━━━━━\n\nPilih Detail untuk info akun & ekspor config (.txt).")
 	return b.String()
+}
+
+// accountListStatus derives the FR-08 AC-1 status label for one list item
+// (parity reference ✅/⚠️/❌ sebagai teks polos — icon policy): Expired →
+// "Expired"; non-aktif (mis. dinonaktifkan / kuota habis) → "Hampir Habis";
+// aktif dengan kuota ≥90% (threshold AC-3) → "Hampir Habis"; else "Aktif".
+func accountListStatus(c postgres.ClientView, now time.Time) string {
+	if c.IsExpired || (c.ExpiresAt != nil && !c.ExpiresAt.After(now)) {
+		return "Expired"
+	}
+	if !c.IsActive {
+		return "Hampir Habis"
+	}
+	// Kuota ≥90% (parity AC-3): bandingkan persen, bukan label — perubahan
+	// copy halaman traffic tidak boleh mengubah perilaku list (anti-coupling).
+	if _, _, pct := trafficStatus(c.TrafficUsed, c.TrafficLimit); pct >= 90 {
+		return "Hampir Habis"
+	}
+	return "Aktif"
+}
+
+// accountRemaining renders the smart remaining time (FR-08 AC-1
+// time_remaining_display parity): jam untuk sisa < 24 jam (trial 1 jam),
+// hari untuk sisa lebih panjang — sama dengan format "sisa N hari" lama.
+func accountRemaining(c postgres.ClientView, now time.Time) string {
+	if c.ExpiresAt == nil {
+		return "" // defensive: caller sudah guard, helper tetap aman berdiri sendiri
+	}
+	remain := c.ExpiresAt.Sub(now)
+	if remain <= 0 {
+		return "sudah habis"
+	}
+	if remain < 24*time.Hour {
+		h := int(remain.Hours())
+		if h < 1 {
+			h = 1
+		}
+		return fmt.Sprintf("sisa %d jam", h)
+	}
+	return fmt.Sprintf("sisa %d hari", int(remain.Hours()/24)+1)
 }
 
 func flagOrGlobe(flag string) string {

@@ -80,8 +80,27 @@ func TestParseOrderType(t *testing.T) {
 	if got, _ := ParseOrderType("renewal"); got != OrderTypeRenewal {
 		t.Errorf("ParseOrderType(renewal) = %s", got)
 	}
+	if got, _ := ParseOrderType("deletion"); got != OrderTypeDeletion {
+		t.Errorf("ParseOrderType(deletion) = %s", got)
+	}
 	if _, err := ParseOrderType("bogus"); err == nil {
 		t.Error("ParseOrderType(bogus): expected error")
+	}
+}
+
+func TestNewDeletionRecord_GivenAccount_ThenCompletedZeroAmount(t *testing.T) {
+	o := NewDeletionRecord("KTS-TEST1234-VPN", 1, 2, "vless", "del@vpn.kt")
+	if o.Type != OrderTypeDeletion || o.Status != OrderCompleted {
+		t.Errorf("deletion record = type %s status %s, want deletion/completed", o.Type, o.Status)
+	}
+	if !o.FinalAmount.IsZero() || o.CompletedAt == nil {
+		t.Errorf("deletion record must be zero-amount and completed: %+v", o)
+	}
+	if o.AccountEmail != "del@vpn.kt" || o.Protocol != "vless" || o.ServerID != 2 || o.UserID != 1 {
+		t.Errorf("deletion record fields = %+v", o)
+	}
+	if !o.IsTerminal() {
+		t.Error("deletion record starts completed — must be terminal")
 	}
 }
 

@@ -139,13 +139,45 @@ func TestRenewClient_GivenCorruptPassword_ThenError(t *testing.T) {
 	}
 }
 
+func TestDeleteClient_GivenOwnedIDs_ThenPanelDelClientCalled(t *testing.T) {
+	box := testBox(t)
+	svc := New(&fakeServerStore{byID: &postgres.VPNServer{
+		ID: 9, Name: "ID-01", CountryCode: "ID", Host: "h", Port: 1, Username: "u",
+		PasswordEnc: mustEncrypt(t, box, "p"), APIPath: "/",
+	}}, box, nil)
+	panel := &fakePanel{}
+	svc.panelFactory = func(context.Context, int64) (inboundLister, error) { return panel, nil }
+
+	if err := svc.DeleteClient(context.Background(), 9, 5, "uuid-1"); err != nil {
+		t.Fatalf("DeleteClient: %v", err)
+	}
+	if panel.deletedIn != 5 || panel.deletedCid != "uuid-1" {
+		t.Errorf("delClient = (inbound %d, client %s), want (5, uuid-1)", panel.deletedIn, panel.deletedCid)
+	}
+}
+
+func TestDeleteClient_GivenUnknownServer_ThenErrorBeforePanelCall(t *testing.T) {
+	svc := New(&fakeServerStore{byIDErr: errNotFound}, testBox(t), nil)
+	if err := svc.DeleteClient(context.Background(), 999, 5, "uuid-1"); err == nil {
+		t.Fatal("DeleteClient = nil, want error for unknown server")
+	}
+}
+
 // --- fakes ---
 
 type fakeServerStore struct {
-	upserted []postgres.VPNServer
-	buyable  []postgres.ServerView
-	byID     *postgres.VPNServer
-	byIDErr  error
+	upserted  []postgres.VPNServer
+	buyable   []postgres.ServerView
+	all       []postgres.ServerAdminView
+	byID      *postgres.VPNServer
+	byIDErr   error
+	created   *postgres.VPNServer
+	createErr error
+	dup       *postgres.VPNServer
+	setOpen   *bool
+	setActive *bool
+	toggledID int64
+	toggleErr error
 }
 
 func (f *fakeServerStore) UpsertSeed(_ context.Context, s postgres.VPNServer) error {
@@ -157,6 +189,25 @@ func (f *fakeServerStore) ListBuyable(context.Context) ([]postgres.ServerView, e
 }
 func (f *fakeServerStore) GetByID(_ context.Context, _ int64) (*postgres.VPNServer, error) {
 	return f.byID, f.byIDErr
+}
+func (f *fakeServerStore) ListAll(context.Context) ([]postgres.ServerAdminView, error) {
+	return f.all, nil
+}
+func (f *fakeServerStore) SetOpen(_ context.Context, id int64, open bool) error {
+	f.toggledID, f.setOpen = id, &open
+	return f.toggleErr
+}
+func (f *fakeServerStore) SetActive(_ context.Context, id int64, active bool) error {
+	f.toggledID, f.setActive = id, &active
+	return f.toggleErr
+}
+func (f *fakeServerStore) Create(_ context.Context, s *postgres.VPNServer) error {
+	s.ID = 99
+	f.created = s
+	return f.createErr
+}
+func (f *fakeServerStore) FindByHostPort(context.Context, string, int, string) (*postgres.VPNServer, error) {
+	return f.dup, nil
 }
 
 var errNotFound = errors.New("server not found")

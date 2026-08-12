@@ -162,6 +162,7 @@ var expectedTables = map[string][]string{
 		"protocol", "flow", "traffic_limit", "traffic_used", "traffic_up",
 		"traffic_down", "ip_limit", "is_banned", "is_active", "is_expired",
 		"is_trial", "expires_at", "config_link", "subscription_url",
+		"inbound_network", "inbound_path",
 		"notified_expiry", "last_sync", "last_online", "created_at", "updated_at",
 	},
 	"orders": {
@@ -182,6 +183,9 @@ var expectedTables = map[string][]string{
 	"pricing": {
 		"id", "country_code", "plan_days", "price", "enabled", "updated_at",
 	},
+	"admin_audit_log": {
+		"id", "admin_id", "action", "target", "detail", "created_at",
+	},
 }
 
 // expectedIndexes lists the explicit indexes required by PRD §13.
@@ -196,4 +200,5 @@ var expectedIndexes = []string{
 	"idx_balance_tx_created",
 	"idx_payments_user",
 	"idx_payments_status",
+	"idx_admin_audit_created",
 }

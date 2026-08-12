@@ -45,16 +45,22 @@ func (c *Client) AddClient(ctx context.Context, payload AddClientPayload) error 
 	return c.do(ctx, "POST", "xui/API/inbounds/addClient", form, nil)
 }
 
-// UpdateClientPayload is the form data for updateClient.
-type UpdateClientPayload struct {
+// UpdateClientRawPayload is the raw-JSON form data for updateClient: the
+// client spec is sent VERBATIM so fields not modelled by ClientSpec (e.g.
+// vless `reverse`/xhttp) survive the round-trip instead of being dropped
+// silently (v1.38 renewal fix).
+type UpdateClientRawPayload struct {
 	InboundID int
 	ClientID  string
-	Client    ClientSpec
+	Client    json.RawMessage
 }
 
-// UpdateClient updates a client (POST /xui/API/inbounds/updateClient/:clientId).
-func (c *Client) UpdateClient(ctx context.Context, payload UpdateClientPayload) error {
-	settings, err := clientsSettingsJSON([]ClientSpec{payload.Client})
+// UpdateClientRaw updates a client with a raw spec (POST
+// /xui/API/inbounds/updateClient/:clientId). x-ui REPLACES the whole client
+// object, so renewal re-sends the client's current spec verbatim with only
+// enable/expiryTime patched — no field may be lost.
+func (c *Client) UpdateClientRaw(ctx context.Context, payload UpdateClientRawPayload) error {
+	settings, err := rawClientsSettingsJSON(payload.Client)
 	if err != nil {
 		return err
 	}
@@ -121,6 +127,16 @@ func clientsSettingsJSON(clients []ClientSpec) (string, error) {
 	raw, err := json.Marshal(map[string][]ClientSpec{"clients": clients})
 	if err != nil {
 		return "", fmt.Errorf("xui marshal settings: %w", err)
+	}
+	return string(raw), nil
+}
+
+// rawClientsSettingsJSON builds the {"clients":[<raw>]} settings string from a
+// raw client JSON object, preserving every field of the original.
+func rawClientsSettingsJSON(client json.RawMessage) (string, error) {
+	raw, err := json.Marshal(map[string][]json.RawMessage{"clients": {client}})
+	if err != nil {
+		return "", fmt.Errorf("xui marshal raw settings: %w", err)
 	}
 	return string(raw), nil
 }

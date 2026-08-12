@@ -37,25 +37,31 @@ func (r *ClientRepo) Create(ctx context.Context, c *VPNClient) error {
 	return nil
 }
 
-// ListByUser returns the user's clients joined with server display fields
-// (FR-08 list), newest first, bounded to limit.
+// ListByUser returns the user's first page of clients, newest first
+// (FR-08 list, bounded to limit) — delegate to the paged query so the
+// renew/account views share one paginated path (FR-08 AC-1).
 func (r *ClientRepo) ListByUser(ctx context.Context, userID int64, limit int) ([]ClientView, error) {
-	if limit <= 0 || limit > 50 {
-		limit = 5
-	}
+	return r.ListByUserPage(ctx, userID, limit, 0)
+}
+
+// GetViewOwned returns one client joined with its server display fields, only
+// when it belongs to the user (FR-08 detail/export, M7).
+func (r *ClientRepo) GetViewOwned(ctx context.Context, clientID, userID int64) (ClientView, error) {
 	var rows []ClientView
 	err := r.db.WithContext(ctx).
 		Table("vpn_clients AS c").
-		Select("c.*, s.name AS server_name, s.flag_emoji, s.country_code").
+		Select("c.*, s.name AS server_name, s.host AS server_host, s.flag_emoji, s.country_code").
 		Joins("LEFT JOIN vpn_servers AS s ON s.id = c.server_id").
-		Where("c.user_id = ?", userID).
-		Order("c.created_at DESC").
-		Limit(limit).
+		Where("c.id = ? AND c.user_id = ?", clientID, userID).
+		Limit(1).
 		Scan(&rows).Error
 	if err != nil {
-		return nil, fmt.Errorf("listing user clients: %w", err)
+		return ClientView{}, fmt.Errorf("getting client view %d: %w", clientID, err)
 	}
-	return rows, nil
+	if len(rows) == 0 {
+		return ClientView{}, ErrClientNotFound
+	}
+	return rows[0], nil
 }
 
 // GetOwned returns one client only if it belongs to the user.
@@ -71,6 +77,22 @@ func (r *ClientRepo) GetOwned(ctx context.Context, clientID, userID int64) (*VPN
 	return &c, nil
 }
 
+// DeleteOwned removes one client row only when it belongs to the user
+// (FR-08 AC-4). The caller must already have deleted the panel client — the
+// DB row is the local mirror, never the source of truth.
+func (r *ClientRepo) DeleteOwned(ctx context.Context, clientID, userID int64) error {
+	res := r.db.WithContext(ctx).
+		Where("id = ? AND user_id = ?", clientID, userID).
+		Delete(&VPNClient{})
+	if res.Error != nil {
+		return fmt.Errorf("deleting client %d: %w", clientID, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrClientNotFound
+	}
+	return nil
+}
+
 // UpdateExpiry extends the client validity and optional traffic limit (FR-05).
 // The expiry-notification flag is reset so renewal restarts the H-7/H-3/H-1 cycle.
 func (r *ClientRepo) UpdateExpiry(ctx context.Context, clientID int64, expiresAt time.Time, trafficLimit *int64) error {
@@ -83,6 +105,18 @@ func (r *ClientRepo) UpdateExpiry(ctx context.Context, clientID int64, expiresAt
 		return fmt.Errorf("updating client expiry: %w", err)
 	}
 	return nil
+}
+
+// CountActive counts all live clients across servers (FR-11 admin dashboard).
+func (r *ClientRepo) CountActive(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&VPNClient{}).
+		Where("is_active = true AND (is_expired = false OR expires_at > now())").
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("counting active clients: %w", err)
+	}
+	return n, nil
 }
 
 // CountActiveByUser counts non-expired, non-trial clients (renew menu sizing).

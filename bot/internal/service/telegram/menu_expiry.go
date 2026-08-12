@@ -15,10 +15,11 @@ package telegram
 
 import "fmt"
 
-// ExpiryNotifyText renders the H-N reminder for a single account. expiryDate is
-// pre-formatted by the caller in the configured TIME_LOCATION (FR-09 AC).
+// ExpiryNotifyText renders the H-N reminder for a single account (branded
+// banner on top, v1.43). expiryDate is pre-formatted by the caller in the
+// configured TIME_LOCATION (FR-09 AC).
 func ExpiryNotifyText(day int, serverName, email, expiryDate string) string {
-	return fmt.Sprintf("Pengingat Kadaluarsa\n━━━━━━━━━━━━━━\n\n"+
+	return fmt.Sprintf(BrandHeader()+"\n\nPengingat Kadaluarsa\n━━━━━━━━━━━━━━\n\n"+
 		"Akun VPN kamu (%s) di server %s akan kadaluarsa dalam %d hari.\n"+
 		"Tanggal kadaluarsa: %s\n\n"+
 		"Perpanjang sebelum habis agar koneksi tidak terputus.\n"+

@@ -22,8 +22,10 @@ useDefault = true
 #    file template ini tetap discan penuh.
 # 3. Nilai DUMMY di file test Go bot/ — testSecret 32-hex (AES-256-GCM fixture
 #    crypto_test.go & webhook_test.go), password mock panel "trojan-pass-123"
-#    (client_test.go & handler_test.go), dan password integrasi mock
-#    "s3cret-integration-pass" (crypto_test.go). Bukan kredensial asli;
+#    (client_test.go & handler_test.go), password integrasi mock
+#    "s3cret-integration-pass" (crypto_test.go), password mock shadowsocks-2022
+#    "RKGCce+E1Eo7xA+..." (linkgen_test.go fixtureSS2022) dan subId dummy
+#    "kts-abcd5678" (menu_config_test.go). Bukan kredensial asli;
 #    di-allowlist per-REGEX (bukan per-path) supaya secret asli di file test
 #    mana pun tetap terdeteksi.
 [allowlist]
@@ -38,7 +40,9 @@ paths = [
 ]
 
 regexes = [
-    '''0123456789abcdef0123456789abcdef''', # testSecret 32-hex dummy AES-256-GCM (bot/*_test.go)
-    '''trojan-pass-123''',                   # password dummy mock panel XUI (bot/*_test.go)
-    '''s3cret-integration-pass''',           # password dummy integrasi mock (bot/*_test.go)
+    '''0123456789abcdef0123456789abcdef''',       # testSecret 32-hex dummy AES-256-GCM (bot/*_test.go)
+    '''trojan-pass-123''',                         # password dummy mock panel XUI (bot/*_test.go)
+    '''s3cret-integration-pass''',                 # password dummy integrasi mock (bot/*_test.go)
+    '''RKGCce\+E1Eo7xA\+Zs55Vns82s\+i7lwQp7DHmCLm\+xqk=''', # password dummy mock shadowsocks-2022 (bot/internal/service/server/linkgen_test.go)
+    '''kts-abcd5678''',                            # subId dummy fixture config v2ray (bot/internal/service/telegram/menu_config_test.go)
 ]

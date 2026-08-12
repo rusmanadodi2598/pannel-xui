@@ -16,11 +16,9 @@ package telegram
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/kentangtech/bot-order/internal/domain"
-	"github.com/kentangtech/bot-order/internal/repository/postgres"
 )
 
 // Admin callback data contract (FR-11, pola admin:*).
@@ -55,15 +53,20 @@ func AdminMenuText() string {
 		"Menu ini hanya dapat diakses ADMIN_IDS."
 }
 
-// AdminMenuKeyboard renders the FR-11 admin actions.
+// AdminMenuKeyboard renders the FR-11 admin actions (icon policy: action
+// buttons text-only, navigation buttons keep icons; 2-1-2-1 zigzag).
 func AdminMenuKeyboard() models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "👛 Harga", CallbackData: CallbackAdminPrice}},
-		{{Text: "📣 Broadcast", CallbackData: CallbackAdminBroadcast}},
-		{{Text: "⛔ Ban User", CallbackData: CallbackAdminBan}},
-		{{Text: "✅ Unban User", CallbackData: CallbackAdminUnban}},
-		backRow(CallbackHome, "🏠 Menu Utama"),
-	}}
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(
+		models.InlineKeyboardButton{Text: "Harga", CallbackData: CallbackAdminPrice},
+		models.InlineKeyboardButton{Text: "Server", CallbackData: CallbackAdminServers},
+		models.InlineKeyboardButton{Text: "Broadcast", CallbackData: CallbackAdminBroadcast},
+		models.InlineKeyboardButton{Text: "Ban User", CallbackData: CallbackAdminBan},
+		models.InlineKeyboardButton{Text: "Unban User", CallbackData: CallbackAdminUnban},
+		models.InlineKeyboardButton{Text: "Adjust Saldo", CallbackData: CallbackAdminSaldo},
+		models.InlineKeyboardButton{Text: "Statistik", CallbackData: CallbackAdminStats},
+		models.InlineKeyboardButton{Text: "Audit Log", CallbackData: CallbackAdminAudit},
+		backBtn(CallbackHome, "🏠 Menu Utama"),
+	)}
 }
 
 // AdminPriceText introduces the plan list.
@@ -72,22 +75,25 @@ func AdminPriceText() string {
 }
 
 // AdminPriceKeyboard lists every plan (enabled and disabled); disabled plans
-// are prefixed with a marker so the admin sees the sellable state at a glance.
+// are prefixed with a marker so the admin sees the sellable state at a glance
+// (2-1-2-1 zigzag).
 func AdminPriceKeyboard(plans []domain.VpnPlan) models.ReplyMarkup {
-	rows := make([][]models.InlineKeyboardButton, 0, len(plans)+2)
+	buttons := make([]models.InlineKeyboardButton, 0, len(plans)+2)
 	for _, p := range plans {
 		label := fmt.Sprintf("%s %d Hari — %s", p.CountryCode, p.Days, p.Price.FormatIDR())
 		if !p.Enabled {
 			label = "🚫 " + label
 		}
-		rows = append(rows, []models.InlineKeyboardButton{{
+		buttons = append(buttons, models.InlineKeyboardButton{
 			Text:         label,
 			CallbackData: PrefixAdminPlan + p.CountryCode + ":" + fmt.Sprintf("%d", p.Days),
-		}})
+		})
 	}
-	rows = append(rows, []models.InlineKeyboardButton{{Text: "🔄 Reload Seed", CallbackData: CallbackAdminReload}})
-	rows = append(rows, backRow(CallbackAdminMenu, "⬅️ Kembali"))
-	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	buttons = append(buttons,
+		models.InlineKeyboardButton{Text: "Reload Seed", CallbackData: CallbackAdminReload},
+		backBtn(CallbackAdminMenu, "⬅️ Kembali"),
+	)
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(buttons...)}
 }
 
 // AdminPlanDetailText shows one plan with its sellable state.
@@ -104,13 +110,13 @@ func AdminPlanDetailText(p domain.VpnPlan) string {
 		p.CountryName, p.CountryCode, p.Days, p.Price.FormatIDR(), status)
 }
 
-// AdminPlanDetailKeyboard offers set-price and toggle actions.
+// AdminPlanDetailKeyboard offers set-price and toggle actions (2-1-2-1 zigzag).
 func AdminPlanDetailKeyboard(country string, days int) models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "✏️ Ubah Harga", CallbackData: PrefixAdminSetPrice + country + ":" + fmt.Sprintf("%d", days)}},
-		{{Text: "🔁 Toggle Status", CallbackData: PrefixAdminToggle + country + ":" + fmt.Sprintf("%d", days)}},
-		backRow(CallbackAdminPrice, "⬅️ Daftar Paket"),
-	}}
+	return models.InlineKeyboardMarkup{InlineKeyboard: packRows(
+		models.InlineKeyboardButton{Text: "Ubah Harga", CallbackData: PrefixAdminSetPrice + country + ":" + fmt.Sprintf("%d", days)},
+		models.InlineKeyboardButton{Text: "Toggle Status", CallbackData: PrefixAdminToggle + country + ":" + fmt.Sprintf("%d", days)},
+		backBtn(CallbackAdminPrice, "⬅️ Daftar Paket"),
+	)}
 }
 
 // AdminSetPricePrompt asks for the new price (FSM input, FR-11).
@@ -137,108 +143,4 @@ func AdminPlanToggledText(country string, days int, enabled bool) string {
 // AdminReloadText confirms a pricing reseed.
 func AdminReloadText() string {
 	return "Pricing di-reload dari file seed. Daftar harga live sudah diperbarui."
-}
-
-// AdminBroadcastPromptText asks for the announcement text (FSM input, FR-11).
-func AdminBroadcastPromptText() string {
-	return "Ketik pesan pengumuman yang akan dikirim ke semua user.\n\n" +
-		"Ketik /cancel untuk membatalkan."
-}
-
-// AdminBroadcastPreviewText quotes the message before the final confirm.
-func AdminBroadcastPreviewText(text string) string {
-	return fmt.Sprintf("Pratinjau Broadcast\n━━━━━━━━━━━━━━\n\n%s\n\n━━━━━━━━━━━━━━\n\nKirim pesan ini ke semua user?", text)
-}
-
-// AdminBroadcastConfirmKeyboard asks explicit confirmation.
-func AdminBroadcastConfirmKeyboard() models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "📨 Kirim ke Semua", CallbackData: CallbackAdminBcastSend}},
-		backRow(CallbackAdminCancel, "❌ Batalkan"),
-	}}
-}
-
-// AdminBroadcastStartText confirms the broadcast started (chunked delivery).
-func AdminBroadcastStartText(total int) string {
-	return fmt.Sprintf("Broadcast sedang dikirim ke %d user (100 pesan per 6 detik).\n"+
-		"Hasil akhir akan dilaporkan di sini.", total)
-}
-
-// BroadcastDoneText reports the final broadcast outcome.
-func BroadcastDoneText(sent, failed int) string {
-	return fmt.Sprintf("Broadcast selesai\n━━━━━━━━━━━━━━\nTerkirim: %d\nGagal: %d", sent, failed)
-}
-
-// AdminBanPromptText asks for the target Telegram id (FSM input, FR-11).
-func AdminBanPromptText() string {
-	return "Ketik Telegram ID user yang ingin di-ban (angka).\n\nKetik /cancel untuk membatalkan."
-}
-
-// AdminUnbanPromptText asks for the target Telegram id (FSM input, FR-11).
-func AdminUnbanPromptText() string {
-	return "Ketik Telegram ID user yang ingin di-unban (angka).\n\nKetik /cancel untuk membatalkan."
-}
-
-// AdminUserNotFoundText reports an unregistered target (ban still applies).
-func AdminUserNotFoundText(tgID int64) string {
-	return fmt.Sprintf("User %d belum terdaftar di bot. Aksi tetap bisa diproses.", tgID)
-}
-
-// AdminBanConfirmText summarizes the ban before confirmation.
-func AdminBanConfirmText(u *postgres.User, tgID int64) string {
-	who := adminUserLabel(u)
-	return fmt.Sprintf("Konfirmasi Ban\n━━━━━━━━━━━━━━\n%s (ID %d)\n\n"+
-		"User ini tidak bisa lagi memakai bot. Lanjutkan?", who, tgID)
-}
-
-// AdminUnbanConfirmText summarizes the unban before confirmation.
-func AdminUnbanConfirmText(u *postgres.User, tgID int64) string {
-	who := adminUserLabel(u)
-	return fmt.Sprintf("Konfirmasi Unban\n━━━━━━━━━━━━━━\n%s (ID %d)\n\n"+
-		"User ini akan dapat memakai bot kembali. Lanjutkan?", who, tgID)
-}
-
-// AdminBanConfirmKeyboard asks explicit confirmation with the target id.
-func AdminBanConfirmKeyboard(tgID int64) models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "⛔ Konfirmasi Ban", CallbackData: PrefixAdminBanConfirm + fmt.Sprintf("%d", tgID)}},
-		backRow(CallbackAdminCancel, "❌ Batal"),
-	}}
-}
-
-// AdminUnbanConfirmKeyboard asks explicit confirmation with the target id.
-func AdminUnbanConfirmKeyboard(tgID int64) models.ReplyMarkup {
-	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: "✅ Konfirmasi Unban", CallbackData: PrefixAdminUnbanConfirm + fmt.Sprintf("%d", tgID)}},
-		backRow(CallbackAdminCancel, "❌ Batal"),
-	}}
-}
-
-// AdminBanDoneText confirms a completed ban.
-func AdminBanDoneText(tgID int64) string {
-	return fmt.Sprintf("User %d sudah di-ban. Marker gate + flag DB diperbarui.", tgID)
-}
-
-// AdminUnbanDoneText confirms a completed unban.
-func AdminUnbanDoneText(tgID int64) string {
-	return fmt.Sprintf("User %d sudah di-unban. Akses dipulihkan.", tgID)
-}
-
-// AdminInputCancelledText confirms an aborted admin input flow.
-func AdminInputCancelledText() string {
-	return "Input dibatalkan. Kembali ke panel admin."
-}
-
-// adminUserLabel renders a human label for the confirm screens.
-func adminUserLabel(u *postgres.User) string {
-	if u == nil {
-		return "User tidak terdaftar"
-	}
-	if strings.TrimSpace(u.FirstName) != "" {
-		return strings.TrimSpace(u.FirstName)
-	}
-	if u.Username != "" {
-		return "@" + u.Username
-	}
-	return "User " + fmt.Sprintf("%d", u.TelegramID)
 }

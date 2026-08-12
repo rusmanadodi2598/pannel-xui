@@ -19,11 +19,14 @@ import (
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 )
 
-// TrialSpec carries the FR-07 provisioning limits (hours, quota, IP).
+// TrialSpec carries the FR-07 provisioning limits (hours, quota, IP) plus the
+// pinned inbound the user picked (server + protocol, FR-07 = FR-03 picker).
 type TrialSpec struct {
 	Hours     int
 	TrafficGB int
 	IPLimit   int
+	InboundID int
+	Protocol  string
 }
 
 // CreateTrial provisions a free trial account (FR-07 AC-2):
@@ -32,7 +35,11 @@ type TrialSpec struct {
 func (s *Service) CreateTrial(ctx context.Context, user *postgres.User, serverID int64, spec TrialSpec) (*PurchaseResult, error) {
 	// duration_days stays 0 for trials (the row stores hours in Notes so order
 	// history/analytics never misread a 1-hour trial as "1 day").
-	order := domain.NewOrder(s.newID(), domain.OrderTypeTrial, user.ID, serverID, "vless", 0, 0)
+	protocol := spec.Protocol
+	if protocol == "" {
+		protocol = "vless" // legacy fallback (no inbound picker)
+	}
+	order := domain.NewOrder(s.newID(), domain.OrderTypeTrial, user.ID, serverID, protocol, 0, 0)
 	order.TrafficGB, order.IPLimit = spec.TrafficGB, spec.IPLimit
 	order.Notes = fmt.Sprintf("trial %d jam", spec.Hours)
 	dbOrder := toOrderRow(order)
@@ -50,7 +57,7 @@ func (s *Service) CreateTrial(ctx context.Context, user *postgres.User, serverID
 	}
 
 	email := clientEmail(order.OrderID)
-	pc, err := s.panels.CreateTrialClient(ctx, serverID, email, order.Protocol, spec.Hours, int64(order.TrafficGB), int64(order.IPLimit))
+	pc, err := s.panels.CreateTrialClient(ctx, serverID, spec.InboundID, email, order.Protocol, spec.Hours, int64(order.TrafficGB), int64(order.IPLimit))
 	if err != nil {
 		_ = order.MarkFailed(err.Error())
 		_ = s.orders.Save(ctx, toOrderRow(order))
@@ -63,6 +70,9 @@ func (s *Service) CreateTrial(ctx context.Context, user *postgres.User, serverID
 		_ = s.orders.Save(ctx, toOrderRow(order))
 		return &PurchaseResult{OrderID: order.OrderID, Status: order.Status, ErrorMessage: err.Error()}, ErrFulfillFailed
 	}
+	client.ConfigLink = pc.ConfigLink
+	client.InboundNetwork = pc.InboundNetwork
+	client.InboundPath = pc.InboundPath
 	row := toClientRow(client)
 	if err := s.clients.Create(ctx, row); err != nil {
 		_ = order.MarkFailed("gagal menyimpan akun trial")

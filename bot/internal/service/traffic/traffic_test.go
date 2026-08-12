@@ -58,6 +58,10 @@ func (f *fakePanel) GetOnlineClients(context.Context) ([]xui.OnlineUser, error) 
 	return f.online, nil
 }
 
+func (f *fakePanel) GetClientTrafficByEmail(context.Context, string) (xui.ClientTraffic, error) {
+	return xui.ClientTraffic{}, f.err
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

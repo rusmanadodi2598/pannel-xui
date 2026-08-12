@@ -109,13 +109,32 @@ func TestAdminUnbanConfirmKeyboard_GivenID_ThenConfirmCallback(t *testing.T) {
 	}
 }
 
-func TestAdminMenuKeyboard_GivenLayout_ThenFourActionsPlusHome(t *testing.T) {
+func TestAdminMenuKeyboard_GivenLayout_ThenZigzagRowsKeepEveryAction(t *testing.T) {
 	kb := AdminMenuKeyboard()
 	markup, _ := kb.(models.InlineKeyboardMarkup)
-	if len(markup.InlineKeyboard) != 5 {
-		t.Fatalf("rows = %d, want 5 (price/broadcast/ban/unban/home)", len(markup.InlineKeyboard))
+	// 9 buttons → 2-1-2-1-2-1 zigzag = 6 rows (v1.42).
+	if len(markup.InlineKeyboard) != 6 {
+		t.Fatalf("rows = %d, want 6 (2-1-2-1-2-1 zigzag of 9 buttons)", len(markup.InlineKeyboard))
 	}
 	if markup.InlineKeyboard[0][0].CallbackData != CallbackAdminPrice {
 		t.Errorf("first = %q, want admin:price", markup.InlineKeyboard[0][0].CallbackData)
+	}
+	if markup.InlineKeyboard[0][1].CallbackData != CallbackAdminServers {
+		t.Errorf("row 1 col 2 = %q, want admin:servers", markup.InlineKeyboard[0][1].CallbackData)
+	}
+	if markup.InlineKeyboard[1][0].CallbackData != CallbackAdminBroadcast {
+		t.Errorf("row 2 = %q, want admin:broadcast", markup.InlineKeyboard[1][0].CallbackData)
+	}
+	if markup.InlineKeyboard[2][0].CallbackData != CallbackAdminBan {
+		t.Errorf("row 3 col 1 = %q, want admin:ban", markup.InlineKeyboard[2][0].CallbackData)
+	}
+	if markup.InlineKeyboard[3][0].CallbackData != CallbackAdminSaldo {
+		t.Errorf("row 4 = %q, want admin:saldo", markup.InlineKeyboard[3][0].CallbackData)
+	}
+	if markup.InlineKeyboard[4][1].CallbackData != CallbackAdminAudit {
+		t.Errorf("row 5 col 2 = %q, want admin:audit", markup.InlineKeyboard[4][1].CallbackData)
+	}
+	if markup.InlineKeyboard[5][0].CallbackData != CallbackHome {
+		t.Errorf("last row = %q, want menu:home", markup.InlineKeyboard[5][0].CallbackData)
 	}
 }

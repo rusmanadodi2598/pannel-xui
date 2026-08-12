@@ -90,7 +90,7 @@ func (d *Dispatcher) adminBanConfirm(ctx context.Context, cb *models.CallbackQue
 		return
 	}
 	d.adminClearFSM(ctx, cb.From.ID)
-	if err := d.admin.Ops.BanUser(ctx, tgID); err != nil {
+	if err := d.admin.Ops.BanUser(ctx, cb.From.ID, tgID); err != nil {
 		d.logger.Error("admin ban failed", "user_id", tgID, "error", err)
 		d.editCB(ctx, cb, "Gagal memproses ban. Coba lagi ya.", nil)
 		return
@@ -106,7 +106,7 @@ func (d *Dispatcher) adminUnbanConfirm(ctx context.Context, cb *models.CallbackQ
 		return
 	}
 	d.adminClearFSM(ctx, cb.From.ID)
-	if err := d.admin.Ops.UnbanUser(ctx, tgID); err != nil {
+	if err := d.admin.Ops.UnbanUser(ctx, cb.From.ID, tgID); err != nil {
 		d.logger.Error("admin unban failed", "user_id", tgID, "error", err)
 		d.editCB(ctx, cb, "Gagal memproses unban. Coba lagi ya.", nil)
 		return
@@ -143,6 +143,14 @@ func (d *Dispatcher) adminHandleText(ctx context.Context, msg *models.Message) b
 		d.adminBanInput(ctx, msg, true)
 	case state == "unban":
 		d.adminBanInput(ctx, msg, false)
+	case state == "saldo:kredit":
+		d.adminSaldoIDInput(ctx, msg, true)
+	case state == "saldo:debit":
+		d.adminSaldoIDInput(ctx, msg, false)
+	case strings.HasPrefix(state, "saldo:kredit:") || strings.HasPrefix(state, "saldo:debit:"):
+		d.adminSaldoAmountInput(ctx, msg, state)
+	case strings.HasPrefix(state, "srvadd:"):
+		d.adminServerAddInput(ctx, msg, state)
 	default:
 		_ = d.admin.FSM.Clear(ctx, msg.From.ID)
 	}
@@ -163,7 +171,7 @@ func (d *Dispatcher) adminPriceInput(ctx context.Context, msg *models.Message, r
 		return
 	}
 	_ = d.admin.FSM.Clear(ctx, msg.From.ID)
-	if err := d.admin.Ops.SetPrice(ctx, country, days, price); err != nil {
+	if err := d.admin.Ops.SetPrice(ctx, msg.From.ID, country, days, price); err != nil {
 		d.logger.Error("admin set price failed", "country", country, "days", days, "error", err)
 		d.send(ctx, msg.Chat.ID, "Gagal mengubah harga. Coba lagi ya.", telegramservice.AdminMenuKeyboard())
 		return

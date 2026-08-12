@@ -63,7 +63,9 @@ type VPNClient struct {
 	ExpiresAt       *time.Time `gorm:"type:timestamptz"`
 	ConfigLink      string     `gorm:"type:text"`
 	SubscriptionURL string     `gorm:"type:text"`
-	NotifiedExpiry  int        `gorm:"not null;default:0"` // FR-09: ambang hari terakhir dikirim (0/7/3/1)
+	InboundNetwork  string     `gorm:"type:text;not null;default:''"` // transport asli (ws/grpc/…) — v1.27
+	InboundPath     string     `gorm:"type:text;not null;default:''"` // path asli inbound (dinamis)
+	NotifiedExpiry  int        `gorm:"not null;default:0"`            // FR-09: ambang hari terakhir dikirim (0/7/3/1)
 	LastSync        *time.Time `gorm:"type:timestamptz"`
 	LastOnline      *time.Time `gorm:"type:timestamptz"`
 	CreatedAt       time.Time  `gorm:"type:timestamptz;not null;default:now()"`
@@ -74,10 +76,12 @@ type VPNClient struct {
 func (VPNClient) TableName() string { return "vpn_clients" }
 
 // ClientView is the read model for the "Akun Saya" list (FR-08 subset, M4):
-// a vpn_clients row joined with its server display fields.
+// a vpn_clients row joined with its server display fields. ServerHost feeds
+// the TLS/non-TLS config link builder (M7, reference client-vpn format).
 type ClientView struct {
 	VPNClient
 	ServerName  string
+	ServerHost  string
 	FlagEmoji   string
 	CountryCode string
 }
