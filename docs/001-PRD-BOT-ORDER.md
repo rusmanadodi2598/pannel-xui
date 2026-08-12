@@ -3,8 +3,8 @@
 | Field            | Value                                                              |
 |------------------|--------------------------------------------------------------------|
 | **Dokumen**      | 001-PRD-BOT-ORDER                                                  |
-| **Status**       | Draft v1.35 — M0–M4 ✅ · M5 partial (flow ✅, API 🔜) · M6 ✅ · M7 ✅ (hardening + **detail akun & ekspor .txt** + **config v2Ray dual TLS/non-TLS path dinamis** + **Riwayat FR-14 ✅** + **Bantuan FR-15 ✅** + **pagination Akun FR-08 AC-1 ✅** + **hapus akun FR-08 AC-4 ✅** + **traffic & refresh manual FR-08 AC-3 ✅** + **convert YAML Clash/Meta FR-08 AC-2 ✅** + **status display list Akun FR-08 AC-1 ✅** + **detail akun lengkap AC-1 (Limit IP + traffic terpakai) ✅** + **hapus akun tercatat di Riwayat AC-4 ✅**) — **UI copy policy: teks tanpa emoji (icon hanya di tombol navigasi)** |
-| **Tanggal**      | 2026-08-11                                                         |
+| **Status**       | Draft v1.46 — M0–M4 ✅ · M5 partial (flow ✅, API 🔜) · M6 ✅ · M7 ✅ (hardening + **detail akun & ekspor .txt** + **config v2Ray dual TLS/non-TLS path dinamis** + **Riwayat FR-14 ✅** + **Bantuan FR-15 ✅** + **pagination Akun FR-08 AC-1 ✅** + **hapus akun FR-08 AC-4 ✅** + **traffic & refresh manual FR-08 AC-3 ✅** + **convert YAML Clash/Meta FR-08 AC-2 ✅** + **status display list Akun FR-08 AC-1 ✅** + **detail akun lengkap AC-1 (Limit IP + traffic terpakai) ✅** + **hapus akun tercatat di Riwayat AC-4 ✅** + **revisi minor UI akun (UUID/Password protocol-aware; URL build hanya di ekspor .txt; sukses Beli/Trial tanpa URL) ✅** + **renew paid-only + idempotence + debit-first auto-refund ✅** + **adjust saldo admin ✅** + **FR-11 lengkap (manajemen server, statistik, audit log) ✅** + **notifikasi order sukses ke grup admin (FR-04 AC) ✅** + **UX keyboard zigzag 2-1-2-1 ✅** + **brand KENTANG TECH konsisten ✅** + **worker health check (server mati tidak dijual) + trial cleanup ✅** + **FR-13 subscription URL ✅ (sub_id dipersist, URL di ekspor .txt — Opsi 2, akun lama tanpa backfill)**) — **UI copy policy: teks tanpa emoji (icon hanya di tombol navigasi; banner brand pengecualian)** |
+| **Tanggal**      | 2026-08-12                                                         |
 | **Penulis**      | Dodi Rusmana `<rusmanadodi@kentangtechstore.com>`                  |
 | **Scope Build**  | Hanya direktori `/bot` — **tidak menyentuh source panel x-ui**     |
 | **Governance**   | Wajib patuh & ter-map ke `AGENTS.md` (lihat §10) — tanpa menulis ulang isinya |
@@ -343,6 +343,18 @@ Sumber referensi: `/home/rusmanadodi/kentangtech-xui/client-vpn`
   trojan://) yang dibangun dari `streamSettings` inbound.
 - **AC**: link sesuai host/port inbound; VLESS Reality menyertakan `flow` &
   `pbk/sid/fp`; link tidak membocorkan private key.
+- **Implementasi (v1.46, FR-13 gap ditutup)**: (a) subscription URL — **Opsi 2**
+  (domain sama dengan panel, port sub server beda — keputusan user): bot
+  menyimpan `sub_id` (UUID yang dikirim ke panel saat provisioning) di
+  `vpn_clients.sub_id` (migrasi `000006`, + `subscription_json_url`), lalu
+  membangun URL dari config `SUB_BASE_URL` + `SUB_PATH`/`SUB_JSON_PATH`
+  (`ordersvc.SubLinks` — join kanonik, robust thd trailing slash); persist
+  saat `Purchase` & `CreateTrial`; URL **hanya** ditampilkan di Ekspor `.txt`
+  (keputusan user v1.36); akun lama (kolom kosong) = legacy gap
+  terdokumentasi, tanpa backfill. (b) share link per protokol — selesai
+  v1.26–v1.33 (`service/server/linkgen.go` + `link_*.go`, path dinamis dari
+  streamSettings inbound). **Prasyarat ops**: sub server panel aktif
+  (`subEnable=true`, `subPath`/`subJsonPath` match config, port reachable).
 
 ### FR-14 Riwayat Transaksi (Order History)
 - Menu "Riwayat": daftar order user (pagination, 5/halaman) → detail per order
@@ -918,9 +930,9 @@ docker-compose.yml
 | **M2**    | X-UI client (login, session cache, CRUD client, traffic) + unit test mock server | ✅ selesai (v1.7) |
 | **M3**    | Core webhook go-telegram/bot: setWebhook, secret token, dispatcher, middleware (gate/ban/rate limit), menu | ✅ selesai (v1.8) |
 | **M4**    | Order flow: pricing, beli, renewal, fulfillment state machine, ledger | ✅ selesai (v1.11) |
-| **M5**    | Topup QRIS: KentangTech API + webhook HMAC + idempotency + notif | 🔶 partial (v1.13): menu/flow ✅, API di-defer (StubGateway) |
-| **M6**    | Trial, notifikasi kadaluarsa, sync traffic, multi-server, perintah admin | ✅ selesai (v1.21): Trial · Notifikasi kadaluarsa · Admin (harga/broadcast/ban-unban) · Sync traffic |
-| **M7**    | Hardening: test penuh, race, load test, staging, UAT, dokumentasi | 🔶 partial (v1.22): coverage gap tertutup · race ✅ · load test (bench) ✅ · UAT checklist ✅ — staging demo & UAT eksekusi ⬜ |
+| **M5**    | Topup QRIS: KentangTech API + webhook HMAC + idempotency + notif | 🔶 partial (v1.13): menu/flow ✅, API di-defer (StubGateway) — **satu-satunya gap fitur tersisa; dikerjakan paling belakang (keputusan user)** |
+| **M6**    | Trial, notifikasi kadaluarsa, sync traffic, multi-server, perintah admin | ✅ selesai (v1.21 → v1.40): Trial · Notifikasi kadaluarsa · Sync traffic · **Admin lengkap (harga/broadcast/ban-unban + manajemen server + statistik + audit log, v1.40)** · adjust saldo (v1.39) |
+| **M7**    | Hardening: test penuh, race, load test, staging, UAT, dokumentasi | 🔶 partial (v1.22 → v1.46): coverage gap ✅ · race ✅ · load test ✅ · UAT checklist ✅ · **FR-08/14/15 lengkap (v1.25–v1.35) · renew paid-only + idempotence + auto-refund (v1.37–v1.38) · UX zigzag + brand (v1.42–v1.44) · worker health check + trial cleanup (v1.45) · FR-13 subscription URL (v1.46) ✅** — sisa: eksekusi UAT item yang butuh user non-admin/akun mendekati expiry/prasyarat panel (docs/002, 46 item) + demo E2E beli → QRIS (menunggu API final) |
 | **Total** |                                                                      | **± 4–6 minggu** |
 
 **Exit criteria v1:** semua AC FR-01 s.d. FR-15 lolos; `go test -race ./...`
