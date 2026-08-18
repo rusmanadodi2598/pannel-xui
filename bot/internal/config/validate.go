@@ -60,6 +60,19 @@ func (c *Config) validate() error {
 	if c.QRISExpiryMinutes <= 0 {
 		return fmt.Errorf("QRIS_EXPIRY_MINUTES must be positive: %d", c.QRISExpiryMinutes)
 	}
+	// PG Aggregate credentials (Phase 4): fail-fast on missing payment config.
+	if c.KTSBaseURL == "" {
+		return fmt.Errorf("KTS_BASE_URL is required")
+	}
+	if c.KTSAPIKey == "" {
+		return fmt.Errorf("KTS_API_KEY is required")
+	}
+	if len(c.KTSSecret) < 16 {
+		return fmt.Errorf("KTS_SECRET must be at least 16 characters")
+	}
+	if c.KTSChargeTTL <= 0 {
+		return fmt.Errorf("KTS_CHARGE_TTL_MIN must be positive: %v", c.KTSChargeTTL)
+	}
 	if c.XUIAPITimeout <= 0 {
 		return fmt.Errorf("XUI_API_TIMEOUT must be positive: %v", c.XUIAPITimeout)
 	}

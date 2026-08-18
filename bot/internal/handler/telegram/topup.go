@@ -4,8 +4,8 @@
 // @for       Topup menu → quick-pick/custom nominal → confirm → gateway seam.
 // @uses      context, strings, github.com/go-telegram/bot/models, internal/domain,
 // internal/service/telegram, internal/service/topup
-// @reason    Menus & flow are product-final; only the KentangTech payment API is
-// deferred behind PaymentGateway (StubGateway) — no rewrite needed later.
+// @reason    Menus & flow are product-final; the payment call goes through the
+// PaymentGateway seam (Phase 4: kts PG charge), settlement via webhook.
 // @author    Dodi Rusmana <rusmanadodi@kentangtechstore.com>
 // @layer     handler
 // @stability experimental

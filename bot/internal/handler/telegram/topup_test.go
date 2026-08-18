@@ -13,6 +13,7 @@ package telegramhandler
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestTopup_GivenAmountOutOfRange_ThenAnswered(t *testing.T) {
 func TestTopup_GivenConfirmWithStubGateway_ThenUnavailableTextNoPanic(t *testing.T) {
 	f := newFakeTopup()
 	f.topups.quote = &topupsvc.Quote{Net: 10000, Gross: 10300, TotalFee: 300, FeePercent: 0.02775}
-	f.topups.createErr = topupsvc.ErrPaymentAPIUnavailable
+	f.topups.createErr = errors.New("gateway down")
 	api := &fakeAPI{}
 	d := dispatcherWithTopup(api, f)
 	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTopupConfirm+"10000"))
@@ -90,7 +91,7 @@ func TestTopup_GivenConfirmWithStubGateway_ThenUnavailableTextNoPanic(t *testing
 func TestTopup_GivenConfirmWithResult_ThenPaymentText(t *testing.T) {
 	f := newFakeTopup()
 	f.topups.quote = &topupsvc.Quote{Net: 10000, Gross: 10300, TotalFee: 300, FeePercent: 0.02775}
-	f.topups.result = &topupsvc.PaymentResult{OrderID: "TP-1", Amount: 10300}
+	f.topups.result = &topupsvc.PaymentResult{OrderID: "TP-1", CheckoutURL: "https://api.midtrans.com/v2/qris/abc", Amount: 10300}
 	api := &fakeAPI{}
 	d := dispatcherWithTopup(api, f)
 	d.Handle(context.Background(), cbUpdate(7, telegramservice.PrefixTopupConfirm+"10000"))

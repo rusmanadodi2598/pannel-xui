@@ -116,13 +116,6 @@ func TestWebhookTelegram_GivenMissingSecret_Then403(t *testing.T) {
 	}
 }
 
-func TestWebhookPayments_GivenPost_Then501Stub(t *testing.T) {
-	rec := do(t, newTestHandler(nil, nil), http.MethodPost, "/api/v1/webhooks/payments", nil)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501", rec.Code)
-	}
-}
-
 func TestUnknownPath_Then404(t *testing.T) {
 	rec := do(t, newTestHandler(nil, nil), http.MethodGet, "/api/v1/nope", nil)
 	if rec.Code != http.StatusNotFound {

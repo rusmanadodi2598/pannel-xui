@@ -12,27 +12,20 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/kentangtech/bot-order/internal/config"
-	"github.com/kentangtech/bot-order/internal/domain"
 	"github.com/kentangtech/bot-order/internal/handler/http"
 	telegramhandler "github.com/kentangtech/bot-order/internal/handler/telegram"
-	"github.com/kentangtech/bot-order/internal/job"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 	"github.com/kentangtech/bot-order/internal/repository/redis"
 	telegramrepo "github.com/kentangtech/bot-order/internal/repository/telegram"
-	expirysvc "github.com/kentangtech/bot-order/internal/service/expiry"
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
-	topupsvc "github.com/kentangtech/bot-order/internal/service/topup"
 )
 
 // version is injected at build time via -ldflags "-X main.version=...".
@@ -139,18 +132,7 @@ func run() error {
 	// M6 (FR-09): notifikasi kadaluarsa H-7/H-3/H-1 — worker interval; tanggal
 	// di pesan diformat sesuai TIME_LOCATION (FR-09 AC). Loop berhenti via ctx.
 	if cfg.ExpiryNotifyEnabled {
-		clientRepo := postgres.NewClientRepo(db.DB())
-		expirySvc := expirysvc.New(clientRepo, tgClient, cfg.ExpiryNotifyDays,
-			cfg.ExpiryNotifyBatch, cfg.TimeLocation, logger)
-		// Timeout per sweep 2 mnt (Telegram calls) — expirysvc menyelesaikan
-		// semua ambang dalam satu sweep, bounded (AGENTS.md §1.6).
-		notifier := job.NewIntervalWorker(cfg.ExpiryNotifyInterval, 2*time.Minute, expirySvc, logger)
-		var notifyWG sync.WaitGroup
-		notifyWG.Add(1)
-		go func() {
-			defer notifyWG.Done()
-			notifier.Run(ctx)
-		}()
+		notifyWG := startExpiryNotify(ctx, cfg, db, tgClient, logger)
 		// Drain sebelum run() kembali: batalkan ctx DULU (stop idempoten) — defer
 		// LIFO berarti wait terdaftar setelah stop harus memanggil stop sendiri,
 		// kalau tidak jalur error errCh menggantung di Wait() (fix review v1.19).
@@ -158,9 +140,6 @@ func run() error {
 			stop()
 			notifyWG.Wait()
 		}()
-		logger.Info("expiry notifier started",
-			"interval_minutes", cfg.ExpiryNotifyInterval.Minutes(),
-			"days", cfg.ExpiryNotifyDays, "batch", cfg.ExpiryNotifyBatch)
 	}
 
 	// M6 (PRD §16.2): sinkron traffic XUI → vpn_clients — worker interval;
@@ -182,17 +161,10 @@ func run() error {
 		defer func() { stop(); cleanupWG.Wait() }()
 	}
 
-	// M5: topup flow (FR-06) — menus live, payment API deferred behind a stub
-	// gateway until the KentangTech Go rewrite ships (product decision).
-	topups := topupsvc.New(
-		topupsvc.StubGateway{},
-		cfg.QRISFeePercent,
-		cfg.QRISPPNPercent,
-		domain.Money(cfg.MinTopupAmount),
-		domain.Money(cfg.MaxTopupAmount),
-	)
+	// M5/Phase 4: topup flow (FR-06) — PG Aggregate charge via kts.Client
+	// (wired in buildShop); the webhook settles the balance asynchronously.
 	topupFSM := redis.NewTopupFSM(rdb, topupFSMTTL)
-	topup := &telegramhandler.Topup{Users: shop.Users, Topups: topups, FSM: topupFSM}
+	topup := &telegramhandler.Topup{Users: shop.Users, Topups: bundle.Topup, FSM: topupFSM}
 
 	// Dispatcher consumed by the bounded worker pool (per-user serialization).
 	dispatcher := telegramhandler.NewDispatcher(tgClient, gate, banned, limiter, logger, cfg.RequiredGroupLink, cfg.AdminIDs, shop, topup, bundle.Admin)
@@ -208,38 +180,13 @@ func run() error {
 		Redis:         rdb,
 		Worker:        worker,
 		Dedup:         rdb,
+		// Phase 4: pg.charge settlement — secretKey sama untuk outbound S2S
+		// dan verifikasi X-Webhook-Signature (013 §2.2).
+		Topup:                bundle.Topup,
+		PaymentWebhookSecret: cfg.KTSSecret,
 	})
 
-	server := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.WebhookPort),
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("http server listening", "addr", server.Addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
-
-	select {
-	case err := <-errCh:
-		return fmt.Errorf("http server: %w", err)
-	case <-ctx.Done():
-		logger.Info("shutdown signal received, draining")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("graceful shutdown: %w", err)
-		}
-		logger.Info("bot-order stopped cleanly")
-		return nil
-	}
+	return serve(ctx, cfg, handler, logger)
 }
 
 // newLogger builds a JSON slog handler at the configured level.

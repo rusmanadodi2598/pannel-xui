@@ -54,6 +54,10 @@ type Options struct {
 	Redis         Pinger
 	Worker        UpdateEnqueuer
 	Dedup         DedupStore
+	// Topup settles pg.charge webhooks (Phase 4); PaymentWebhookSecret is the
+	// merchant secretKey used to verify X-Webhook-Signature (013 §2.2).
+	Topup                TopupSettler
+	PaymentWebhookSecret string
 }
 
 // New builds the /api/v1 router wrapped in the request logger.
@@ -76,13 +80,9 @@ func New(opts Options) http.Handler {
 	// PRD §14.2: verify secret → parse update → dedup update_id → enqueue worker.
 	mux.HandleFunc("POST "+opts.WebhookPath, opts.telegramWebhook)
 
-	// POST /api/v1/webhooks/payments — callback pembayaran (HMAC X-KTS-Signature).
-	// Stub M0; verifikasi HMAC & idempotency di M5 (PRD §15.7, FR-06).
-	mux.HandleFunc("POST "+apiBase+"/webhooks/payments", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"error": "payment webhook handler lands in milestone M5",
-		})
-	})
+	// POST /api/v1/webhooks/payments — pg.charge settlement (013 §2, Phase 4):
+	// verifikasi X-Webhook-Signature, dedup X-Webhook-Id, kredit net atomik.
+	mux.HandleFunc("POST "+apiBase+"/webhooks/payments", opts.paymentsWebhook)
 
 	return requestLogger(opts.Logger, mux)
 }

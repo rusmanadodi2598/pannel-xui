@@ -97,14 +97,41 @@ func TopupAPIUnavailableText() string {
 		"Menu pembayaran sudah aktif, namun kanal pembayaran sedang di-upgrade. Coba lagi dalam beberapa saat ya."
 }
 
-// TopupPaymentText renders a created QRIS payment (branded v1.43; unreachable
-// until the rewritten API ships — kept so the success path is product-final).
+// TopupPaymentText renders a created QRIS payment (Phase 4: the gateway
+// returns the Midtrans checkout URL — the QR is rendered from that URL).
 func TopupPaymentText(p *topupsvc.PaymentResult) string {
 	return fmt.Sprintf(BrandHeader()+"\n\nPembayaran QRIS dibuat\n━━━━━━━━━━━━━━\n"+
 		"Total bayar: %s\n"+
 		"Berlaku sampai: %s\n\n"+
-		"Scan QR di bawah untuk menyelesaikan pembayaran.",
-		p.Amount.FormatIDR(), p.ExpiresAt.Format("02 Jan 2006 15:04"))
+		"Klik link di bawah untuk membayar:\n%s\n\n"+
+		"Saldo otomatis masuk setelah pembayaran terverifikasi.",
+		p.Amount.FormatIDR(), p.ExpiresAt.Format("02 Jan 2006 15:04"), p.CheckoutURL)
+}
+
+// TopupSettledText renders the settlement result pushed by the pg.charge
+// webhook (Phase 4): success shows the credited amount + new balance;
+// failed/expired explain that the topup did not go through.
+func TopupSettledText(status string, amount, balanceAfter domain.Money) string {
+	switch status {
+	case "success":
+		return fmt.Sprintf("Top up berhasil \u2705\n━━━━━━━━━━━━━━\n"+
+			"Saldo bertambah: %s\n"+
+			"Saldo saat ini: %s",
+			amount.FormatIDR(), balanceAfter.FormatIDR())
+	case "expired":
+		return "Top up kadaluarsa \u23f0\n━━━━━━━━━━━━━━\n" +
+			"Pembayaran tidak selesai sebelum batas waktu. Saldo tidak bertambah — silakan coba lagi."
+	default:
+		return "Top up gagal \u274c\n━━━━━━━━━━━━━━\n" +
+			"Pembayaran tidak berhasil. Saldo tidak bertambah — silakan coba lagi."
+	}
+}
+
+// AdminTopupNoticeText is the compact admin-group line for a settled topup
+// (Phase 4, mirrors the FR-04 AC order notice pattern).
+func AdminTopupNoticeText(orderID, status string, telegramID int64, amount, balanceAfter domain.Money) string {
+	return fmt.Sprintf("Top up %s\nOrder: %s\nUser: %d\nJumlah: %s\nSaldo: %s",
+		status, orderID, telegramID, amount.FormatIDR(), balanceAfter.FormatIDR())
 }
 
 // TopupCancelledText confirms a cancelled custom input (/cancel or back).

@@ -50,7 +50,7 @@ func TestLoad_AllValid(t *testing.T) {
 }
 
 func TestLoad_RequiredMissing(t *testing.T) {
-	missing := []string{"BOT_TOKEN", "BOT_DOMAIN", "WEBHOOK_SECRET", "DATABASE_URL", "REDIS_URL", "ENCRYPTION_KEY"}
+	missing := []string{"BOT_TOKEN", "BOT_DOMAIN", "WEBHOOK_SECRET", "DATABASE_URL", "REDIS_URL", "ENCRYPTION_KEY", "KTS_BASE_URL", "KTS_API_KEY", "KTS_SECRET"}
 	for _, key := range missing {
 		t.Run(key, func(t *testing.T) {
 			env := validEnv()
@@ -134,7 +134,7 @@ func TestLoad_Defaults(t *testing.T) {
 	// Keep only required fields; everything else must fall back to defaults.
 	for k := range env {
 		switch k {
-		case "BOT_TOKEN", "BOT_DOMAIN", "WEBHOOK_SECRET", "DATABASE_URL", "REDIS_URL", "ENCRYPTION_KEY":
+		case "BOT_TOKEN", "BOT_DOMAIN", "WEBHOOK_SECRET", "DATABASE_URL", "REDIS_URL", "ENCRYPTION_KEY", "KTS_BASE_URL", "KTS_API_KEY", "KTS_SECRET":
 		default:
 			delete(env, k)
 		}
@@ -159,6 +159,9 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.QRISFeePercent != 0.025 || cfg.QRISPPNPercent != 0.11 {
 		t.Errorf("QRIS fees = %v/%v, want 0.025/0.11", cfg.QRISFeePercent, cfg.QRISPPNPercent)
+	}
+	if cfg.KTSChargeTTL != 24*time.Hour {
+		t.Errorf("KTSChargeTTL = %v, want 24h", cfg.KTSChargeTTL)
 	}
 	if len(cfg.ExpiryNotifyDays) != 3 {
 		t.Errorf("ExpiryNotifyDays = %v, want [7 3 1]", cfg.ExpiryNotifyDays)
@@ -246,8 +249,9 @@ func validEnv() map[string]string {
 		"TIME_LOCATION":              "Asia/Jakarta",
 		"XUI_API_TIMEOUT":            "30",
 		"API_BASE_URL":               "https://hostinger.kentangtechstore.com",
-		"TOPUP_API_KEY":              "secret-api-key",
-		"TOPUP_WEBHOOK_SECRET":       "secret-webhook-key",
+		"KTS_BASE_URL":               "https://gateway.kentangtechstore.com",
+		"KTS_API_KEY":                "kt_live_test_api_key",
+		"KTS_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"MIN_TOPUP_AMOUNT":           "5000",
 		"MAX_TOPUP_AMOUNT":           "5000000",
 		"QRIS_FEE_PERCENT":           "0.025",

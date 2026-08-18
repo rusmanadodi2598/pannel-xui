@@ -20,15 +20,16 @@ import (
 )
 
 // Redis key builders — single source of truth for every key the bot writes.
-func UpdateDedupKey(updateID int64) string { return fmt.Sprintf("bot:update:%d", updateID) }
-func GateCacheKey(userID int64) string     { return fmt.Sprintf("bot:gate:%d", userID) }
-func RateLimitKey(userID int64) string     { return fmt.Sprintf("bot:rl:%d", userID) }
-func BanKey(userID int64) string           { return fmt.Sprintf("bot:ban:%d", userID) }
-func UserLockKey(userID int64) string      { return fmt.Sprintf("bot:lock:user:%d", userID) }
-func TopupFSMKey(userID int64) string      { return fmt.Sprintf("bot:fsm:topup:%d", userID) }
-func TrialCounterKey(userID int64) string  { return fmt.Sprintf("bot:trial:%d", userID) }
-func AdminFSMKey(userID int64) string      { return fmt.Sprintf("bot:fsm:admin:%d", userID) }
-func AdminBroadcastKey() string            { return "bot:admin:broadcast" }
+func UpdateDedupKey(updateID int64) string      { return fmt.Sprintf("bot:update:%d", updateID) }
+func GateCacheKey(userID int64) string          { return fmt.Sprintf("bot:gate:%d", userID) }
+func RateLimitKey(userID int64) string          { return fmt.Sprintf("bot:rl:%d", userID) }
+func BanKey(userID int64) string                { return fmt.Sprintf("bot:ban:%d", userID) }
+func UserLockKey(userID int64) string           { return fmt.Sprintf("bot:lock:user:%d", userID) }
+func TopupFSMKey(userID int64) string           { return fmt.Sprintf("bot:fsm:topup:%d", userID) }
+func PaymentWebhookKey(webhookID string) string { return "bot:topup:processed:" + webhookID }
+func TrialCounterKey(userID int64) string       { return fmt.Sprintf("bot:trial:%d", userID) }
+func AdminFSMKey(userID int64) string           { return fmt.Sprintf("bot:fsm:admin:%d", userID) }
+func AdminBroadcastKey() string                 { return "bot:admin:broadcast" }
 
 // SetNX stores value only when the key is absent (idempotency, dedup).
 // It returns true when the key was newly created.

@@ -177,9 +177,9 @@ var expectedTables = map[string][]string{
 		"id", "user_id", "order_id", "type", "amount", "balance_after", "created_at",
 	},
 	"payments": {
-		"id", "order_id", "user_id", "amount_gross", "amount_net", "fee_amount",
-		"fee_pct", "provider_ref", "provider_status", "status", "paid_at",
-		"created_at", "updated_at",
+		"id", "order_id", "user_id", "telegram_id", "amount_gross", "amount_net",
+		"fee_amount", "fee_pct", "provider_ref", "provider_status", "status",
+		"paid_at", "created_at", "updated_at",
 	},
 	"pricing": {
 		"id", "country_code", "plan_days", "price", "enabled", "updated_at",
@@ -201,5 +201,6 @@ var expectedIndexes = []string{
 	"idx_balance_tx_created",
 	"idx_payments_user",
 	"idx_payments_status",
+	"idx_payments_telegram",
 	"idx_admin_audit_created",
 }

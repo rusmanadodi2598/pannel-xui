@@ -43,21 +43,26 @@ type Config struct {
 	TimeLocation          *time.Location
 	XUIAPITimeout         time.Duration
 	APIBaseURL            string
-	TopupAPIKey           string
-	TopupWebhookSecret    string
 	MinTopupAmount        int
 	MaxTopupAmount        int
 	QRISFeePercent        float64
 	QRISPPNPercent        float64
 	QRISExpiryMinutes     int
-	LogLevel              slog.Level
-	Panels                []ServerSeed // multi X-UI instances (FR-10, M4)
-	PricingSeedFile       string       // JSON file seeded into `pricing` at boot (PRD §13.7)
-	TrialEnabled          bool         // FR-07: fitur trial aktif/nonaktif
-	TrialDailyLimit       int          // FR-07 AC-1: maks akun trial per hari per user
-	TrialDurationHours    int          // FR-07: durasi trial dalam jam
-	TrialTrafficGB        int          // FR-07: kuota trial dalam GB
-	TrialIPLimit          int          // FR-07: limit IP akun trial
+	// KTS: PG Aggregate merchant credentials (Phase 4, contract 015/001 §2.3).
+	// KTSSecret is the same secretKey used for outbound S2S signing and inbound
+	// X-Webhook-Signature verification (013 §2.2).
+	KTSBaseURL         string
+	KTSAPIKey          string
+	KTSSecret          string
+	KTSChargeTTL       time.Duration
+	LogLevel           slog.Level
+	Panels             []ServerSeed // multi X-UI instances (FR-10, M4)
+	PricingSeedFile    string       // JSON file seeded into `pricing` at boot (PRD §13.7)
+	TrialEnabled       bool         // FR-07: fitur trial aktif/nonaktif
+	TrialDailyLimit    int          // FR-07 AC-1: maks akun trial per hari per user
+	TrialDurationHours int          // FR-07: durasi trial dalam jam
+	TrialTrafficGB     int          // FR-07: kuota trial dalam GB
+	TrialIPLimit       int          // FR-07: limit IP akun trial
 
 	// Expiry reminders (FR-09).
 	ExpiryNotifyEnabled  bool          // worker notifikasi kadaluarsa aktif
@@ -112,22 +117,23 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		BotToken:           getEnv("BOT_TOKEN", ""),
-		BotDomain:          getEnv("BOT_DOMAIN", ""),
-		WebhookSecret:      getEnv("WEBHOOK_SECRET", ""),
-		DatabaseURL:        getEnv("DATABASE_URL", ""),
-		RedisURL:           getEnv("REDIS_URL", ""),
-		RequiredGroupLink:  getEnv("REQUIRED_GROUP_LINK", ""),
-		APIBaseURL:         getEnv("API_BASE_URL", ""),
-		TopupAPIKey:        getEnv("TOPUP_API_KEY", ""),
-		TopupWebhookSecret: getEnv("TOPUP_WEBHOOK_SECRET", ""),
-		ExpiryNotifyDays:   notifyDays,
-		TimeLocation:       timeLoc,
-		XUIAPITimeout:      time.Duration(timeoutSec) * time.Second,
-		WebhookPath:        getEnv("WEBHOOK_PATH", DefaultWebhookPath),
-		QRISFeePercent:     qrisFee,
-		QRISPPNPercent:     qrisPPN,
-		LogLevel:           parseLogLevel(getEnv("LOG_LEVEL", DefaultLogLevel)),
+		BotToken:          getEnv("BOT_TOKEN", ""),
+		BotDomain:         getEnv("BOT_DOMAIN", ""),
+		WebhookSecret:     getEnv("WEBHOOK_SECRET", ""),
+		DatabaseURL:       getEnv("DATABASE_URL", ""),
+		RedisURL:          getEnv("REDIS_URL", ""),
+		RequiredGroupLink: getEnv("REQUIRED_GROUP_LINK", ""),
+		APIBaseURL:        getEnv("API_BASE_URL", ""),
+		KTSBaseURL:        getEnv("KTS_BASE_URL", ""),
+		KTSAPIKey:         getEnv("KTS_API_KEY", ""),
+		KTSSecret:         getEnv("KTS_SECRET", ""),
+		ExpiryNotifyDays:  notifyDays,
+		TimeLocation:      timeLoc,
+		XUIAPITimeout:     time.Duration(timeoutSec) * time.Second,
+		WebhookPath:       getEnv("WEBHOOK_PATH", DefaultWebhookPath),
+		QRISFeePercent:    qrisFee,
+		QRISPPNPercent:    qrisPPN,
+		LogLevel:          parseLogLevel(getEnv("LOG_LEVEL", DefaultLogLevel)),
 	}
 
 	if cfg.WebhookPort, err = parseIntEnv("WEBHOOK_PORT", DefaultWebhookPort); err != nil {
@@ -157,6 +163,11 @@ func Load() (*Config, error) {
 	if cfg.QRISExpiryMinutes, err = parseIntEnv("QRIS_EXPIRY_MINUTES", DefaultQRISExpiryMinutes); err != nil {
 		return nil, err
 	}
+	chargeTTLMin, err := parseIntEnv("KTS_CHARGE_TTL_MIN", int(DefaultKTSChargeTTL.Minutes()))
+	if err != nil {
+		return nil, err
+	}
+	cfg.KTSChargeTTL = time.Duration(chargeTTLMin) * time.Minute
 	if cfg.DBMaxOpenConns, err = parseIntEnv("DB_MAX_OPEN_CONNS", DefaultDBMaxOpenConns); err != nil {
 		return nil, err
 	}

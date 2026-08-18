@@ -66,6 +66,7 @@ type Payment struct {
 	ID             int64        `gorm:"primaryKey"`
 	OrderID        string       `gorm:"uniqueIndex;not null"`
 	UserID         int64        `gorm:"index:idx_payments_user;not null"`
+	TelegramID     int64        `gorm:"index:idx_payments_telegram;not null;default:0"` // notif topup sukses (Phase 4)
 	AmountGross    domain.Money `gorm:"not null"`
 	AmountNet      domain.Money `gorm:"not null"`
 	FeeAmount      domain.Money `gorm:"not null"`

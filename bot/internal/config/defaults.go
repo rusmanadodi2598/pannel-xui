@@ -27,8 +27,10 @@ const (
 	DefaultQRISFeePercent        = 0.025
 	DefaultQRISPPNPercent        = 0.11
 	DefaultQRISExpiryMinutes     = 15
-	DefaultTimeLocation          = "Asia/Jakarta"
-	DefaultLogLevel              = "info"
+	// PG charge validity window (015 §7.3) — the QRIS the user must pay.
+	DefaultKTSChargeTTL = 24 * time.Hour
+	DefaultTimeLocation = "Asia/Jakarta"
+	DefaultLogLevel     = "info"
 
 	// Trial policy (FR-07): 2 akun/hari, durasi 1 jam, kuota 1 GB, 1 IP.
 	DefaultTrialEnabled       = true

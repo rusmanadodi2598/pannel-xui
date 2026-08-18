@@ -23,8 +23,10 @@ import (
 
 	"github.com/kentangtech/bot-order/internal/config"
 	"github.com/kentangtech/bot-order/internal/crypto"
+	"github.com/kentangtech/bot-order/internal/domain"
 	telegramhandler "github.com/kentangtech/bot-order/internal/handler/telegram"
 	"github.com/kentangtech/bot-order/internal/job"
+	"github.com/kentangtech/bot-order/internal/repository/kts"
 	"github.com/kentangtech/bot-order/internal/repository/postgres"
 	"github.com/kentangtech/bot-order/internal/repository/redis"
 	telegramrepo "github.com/kentangtech/bot-order/internal/repository/telegram"
@@ -35,6 +37,7 @@ import (
 	pricingsvc "github.com/kentangtech/bot-order/internal/service/pricing"
 	serversvc "github.com/kentangtech/bot-order/internal/service/server"
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
+	topupsvc "github.com/kentangtech/bot-order/internal/service/topup"
 	trafficsvc "github.com/kentangtech/bot-order/internal/service/traffic"
 	trialsvc "github.com/kentangtech/bot-order/internal/service/trial"
 	trialcleanupsvc "github.com/kentangtech/bot-order/internal/service/trialcleanup"
@@ -52,6 +55,7 @@ type shopBundle struct {
 	Traffic      *trafficsvc.Service      // shared by the sweep worker + manual refresh
 	Health       *healthsvc.Service       // PRD §17: server mati tidak dijual
 	TrialCleanup *trialcleanupsvc.Service // PRD worker: disable expired trials
+	Topup        *topupsvc.Service        // Phase 4: PG charge topup + settlement
 }
 
 // buildShop seeds pricing & panels and wires the M4 shop, M6 trial and M6
@@ -83,6 +87,20 @@ func buildShop(ctx context.Context, cfg *config.Config, db *postgres.Repository,
 	logger.Info("panels seeded", "count", len(cfg.Panels))
 
 	users := usersvc.New(userRepo)
+
+	// Phase 4 (FR-06): PG Aggregate topup — the bot is a merchant on the
+	// gateway. KTSSecret is the single secretKey: outbound S2S signing AND
+	// inbound X-Webhook-Signature verification (013 §2.2). The notifier is
+	// wired with the optional admin group (NOTIFICATION_GROUP_ID).
+	ktsClient, err := kts.New(cfg.KTSBaseURL, cfg.KTSAPIKey, cfg.KTSSecret, cfg.XUIAPITimeout)
+	if err != nil {
+		return nil, err
+	}
+	paymentRepo := postgres.NewPaymentRepo(gormDB)
+	topupNotif := &topupNotifier{tg: tgClient, chatID: cfg.NotificationGroupID, logger: logger}
+	topups := topupsvc.New(ktsClient, paymentRepo, userRepo,
+		cfg.QRISFeePercent, cfg.QRISPPNPercent,
+		domain.Money(cfg.MinTopupAmount), domain.Money(cfg.MaxTopupAmount), topupNotif)
 
 	// FR-04 AC (v1.41): completed paid orders notify the admin group. The
 	// adapter is only wired when NOTIFICATION_GROUP_ID is configured. Telegram
@@ -162,7 +180,7 @@ func buildShop(ctx context.Context, cfg *config.Config, db *postgres.Repository,
 	admin := &telegramhandler.Admin{Ops: adminSvc, FSM: redis.NewAdminFSM(rdb, adminFSMTTL)}
 	return &shopBundle{
 		Shop: shop, Admin: admin, Servers: servers, Traffic: trafficSvc,
-		Health: healthSvc, TrialCleanup: cleanupSvc,
+		Health: healthSvc, TrialCleanup: cleanupSvc, Topup: topups,
 	}, nil
 }
 
