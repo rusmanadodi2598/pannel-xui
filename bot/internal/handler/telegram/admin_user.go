@@ -20,47 +20,9 @@ import (
 	"strings"
 
 	"github.com/go-telegram/bot/models"
-	adminsvc "github.com/kentangtech/bot-order/internal/service/admin"
 	telegramservice "github.com/kentangtech/bot-order/internal/service/telegram"
 	"gorm.io/gorm"
 )
-
-// adminBroadcastPrompt arms the broadcast FSM and asks for the message.
-func (d *Dispatcher) adminBroadcastPrompt(ctx context.Context, cb *models.CallbackQuery) {
-	if err := d.admin.FSM.Set(ctx, cb.From.ID, "broadcast"); err != nil {
-		d.logger.Error("admin fsm set failed", "user_id", cb.From.ID, "error", err)
-		d.answer(ctx, cb.ID, "Terjadi kendala, coba lagi ya.")
-		return
-	}
-	d.editCB(ctx, cb, telegramservice.AdminBroadcastPromptText(), nil)
-}
-
-// adminBcastSend reads the staged broadcast text from the FSM and starts it.
-func (d *Dispatcher) adminBcastSend(ctx context.Context, cb *models.CallbackQuery) {
-	state, ok, err := d.admin.FSM.Get(ctx, cb.From.ID)
-	if err != nil || !ok || !strings.HasPrefix(state, "broadcast:") {
-		d.answer(ctx, cb.ID, "Tidak ada pesan broadcast yang disiapkan. Coba lagi ya.")
-		return
-	}
-	d.adminClearFSM(ctx, cb.From.ID)
-
-	text := strings.TrimPrefix(state, "broadcast:")
-	total, err := d.admin.Ops.Broadcast(ctx, cb.From.ID, text)
-	if errors.Is(err, adminsvc.ErrBroadcastRunning) {
-		d.editCB(ctx, cb, "Broadcast lain sedang berjalan. Tunggu selesai dulu ya.", nil)
-		return
-	}
-	if err != nil {
-		d.logger.Error("admin broadcast failed", "error", err)
-		d.editCB(ctx, cb, "Gagal memulai broadcast. Coba lagi ya.", nil)
-		return
-	}
-	if total == 0 {
-		d.editCB(ctx, cb, "Belum ada user terdaftar. Broadcast dibatalkan.", nil)
-		return
-	}
-	d.editCB(ctx, cb, telegramservice.AdminBroadcastStartText(total), nil)
-}
 
 // adminBanPrompt arms the ban FSM and asks for the target id.
 func (d *Dispatcher) adminBanPrompt(ctx context.Context, cb *models.CallbackQuery) {
@@ -178,22 +140,6 @@ func (d *Dispatcher) adminPriceInput(ctx context.Context, msg *models.Message, r
 	}
 	d.send(ctx, msg.Chat.ID, telegramservice.AdminPriceSavedText(country, days, price),
 		telegramservice.AdminPlanDetailKeyboard(country, days))
-}
-
-// adminBroadcastInput stages the message and shows the preview + confirm.
-func (d *Dispatcher) adminBroadcastInput(ctx context.Context, msg *models.Message) {
-	text := strings.TrimSpace(msg.Text)
-	if text == "" {
-		d.send(ctx, msg.Chat.ID, telegramservice.AdminBroadcastPromptText(), nil)
-		return
-	}
-	if err := d.admin.FSM.Set(ctx, msg.From.ID, "broadcast:"+text); err != nil {
-		d.logger.Error("admin fsm set failed", "user_id", msg.From.ID, "error", err)
-		d.send(ctx, msg.Chat.ID, "Terjadi kendala, coba lagi ya.", nil)
-		return
-	}
-	d.send(ctx, msg.Chat.ID, telegramservice.AdminBroadcastPreviewText(text),
-		telegramservice.AdminBroadcastConfirmKeyboard())
 }
 
 // adminBanInput resolves the typed id and shows the confirm screen.
