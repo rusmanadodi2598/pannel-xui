@@ -26,7 +26,7 @@ func TestPurchase_GivenSufficientBalance_ThenCompletedAndDebited(t *testing.T) {
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.created = domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
 	res, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless")
@@ -45,8 +45,8 @@ func TestPurchase_GivenSufficientBalance_ThenCompletedAndDebited(t *testing.T) {
 	if len(store.clients.created) != 1 {
 		t.Errorf("clients created = %d, want 1", len(store.clients.created))
 	}
-	if !store.panels.called || !store.debitAfterPanel {
-		t.Error("panel must be called BEFORE debit (FR-04 AC-1)")
+	if !store.panels.called || !store.debitBeforePanel {
+		t.Error("debit must happen BEFORE the panel commit (v1.47 debit-first)")
 	}
 	if last := store.saved[len(store.saved)-1]; last.Status != string(domain.OrderCompleted) {
 		t.Errorf("final order save status = %s, want completed", last.Status)
@@ -59,7 +59,7 @@ func TestPurchase_GivenPanelError_ThenFailedWithoutDebit(t *testing.T) {
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.createErr = errors.New("panel unreachable")
+	store.panels.prepareErr = errors.New("panel unreachable")
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
 	_, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless")
@@ -67,10 +67,13 @@ func TestPurchase_GivenPanelError_ThenFailedWithoutDebit(t *testing.T) {
 		t.Fatalf("err = %v, want ErrFulfillFailed", err)
 	}
 	if store.debited != 0 {
-		t.Error("balance must NOT be debited when panel fails")
+		t.Error("balance must NOT be debited when the panel prepare fails")
 	}
 	if len(store.clients.created) != 0 {
-		t.Error("client must not be recorded when panel fails")
+		t.Error("client must not be recorded when the panel prepare fails")
+	}
+	if store.panels.committed != 0 {
+		t.Error("panel must not be mutated when prepare fails")
 	}
 	if last := store.saved[len(store.saved)-1]; last.Status != string(domain.OrderFailed) {
 		t.Errorf("final order save status = %s, want failed", last.Status)
@@ -105,13 +108,13 @@ func TestPurchase_GivenPlanMissing_ThenErrPlanNotFound(t *testing.T) {
 	}
 }
 
-func TestPurchase_GivenDebitError_ThenFailedWithClientRecordedButNoDebit(t *testing.T) {
+func TestPurchase_GivenDebitError_ThenRowDeletedAndNoDebit(t *testing.T) {
 	plan := &domain.VpnPlan{CountryCode: "ID", CountryName: "Indonesia", Days: 30, Price: 7000}
 	user := &postgres.User{ID: 1, Balance: 50000}
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.created = domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}}
 	store.users.debitErr = errors.New("db down")
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
@@ -122,8 +125,42 @@ func TestPurchase_GivenDebitError_ThenFailedWithClientRecordedButNoDebit(t *test
 	if store.debited != 0 {
 		t.Error("money must NOT be taken when debit fails")
 	}
-	if len(store.clients.created) != 1 {
-		t.Error("client record must exist before debit (recoverable, no money lost)")
+	if store.panels.committed != 0 {
+		t.Error("panel must NOT be mutated when debit fails")
+	}
+	if len(store.clients.created) != 1 || len(store.clients.deleted) != 1 {
+		t.Errorf("row must be created then deleted on debit failure (created=%d deleted=%d)",
+			len(store.clients.created), len(store.clients.deleted))
+	}
+	if last := store.saved[len(store.saved)-1]; last.Status != string(domain.OrderFailed) {
+		t.Errorf("final order save status = %s, want failed", last.Status)
+	}
+}
+
+func TestPurchase_GivenCommitFailure_ThenRefundedAndRowDeleted(t *testing.T) {
+	plan := &domain.VpnPlan{CountryCode: "ID", CountryName: "Indonesia", Days: 30, Price: 7000}
+	user := &postgres.User{ID: 1, Balance: 50000}
+	store := newFakeStores()
+	store.plans.plan = plan
+	store.servers.serverID = 5
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}}
+	store.panels.commitErr = errors.New("panel addClient failed")
+	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
+
+	_, err := svc.Purchase(context.Background(), user, "ID", 30, 0, 0, "vless")
+	if !errors.Is(err, ErrFulfillFailed) {
+		t.Fatalf("err = %v, want ErrFulfillFailed", err)
+	}
+	// Debit-first + auto-refund (v1.47): money moved, then refunded exactly.
+	if store.debited != 1 {
+		t.Errorf("debited = %d, want 1 (money moved before the panel commit)", store.debited)
+	}
+	if len(store.users.credited) != 1 {
+		t.Errorf("credited = %d, want exactly 1 refund", len(store.users.credited))
+	}
+	if len(store.clients.created) != 1 || len(store.clients.deleted) != 1 {
+		t.Errorf("row must be created then deleted on commit failure (created=%d deleted=%d)",
+			len(store.clients.created), len(store.clients.deleted))
 	}
 	if last := store.saved[len(store.saved)-1]; last.Status != string(domain.OrderFailed) {
 		t.Errorf("final order save status = %s, want failed", last.Status)
@@ -191,7 +228,7 @@ func TestPurchase_GivenSubLinks_ThenClientRowCarriesSubscriptionURLs(t *testing.
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.created = domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless", SubID: "sub-abc"}
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless", SubID: "sub-abc"}}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 	svc.SetSubLinks(SubLinks{BaseURL: "https://p.example.com:2096", LinkPath: "/sub", JSONPath: "/json"})
 

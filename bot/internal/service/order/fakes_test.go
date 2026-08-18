@@ -39,8 +39,10 @@ func newFakeStores() *fakeStores {
 	f.plans = &fakePlanReader{}
 	f.servers = &fakeServerPicker{}
 	f.panels = &fakePanelGateway{}
-	// Record debit ordering per flow: purchase debits AFTER the panel call
-	// (FR-04 AC-1); renewal debits BEFORE it (v1.37 debit-first).
+	// Record debit ordering per flow: purchase debits BEFORE the panel commit
+	// (v1.47 debit-first); renewal debits BEFORE it too (v1.37 debit-first).
+	// fakePanelGateway.called flips only on a panel MUTATION (CommitClient),
+	// never on the read-only PrepareClient.
 	f.users.onDebit = func() {
 		f.debited++
 		f.debitAfterPanel = f.panels.called
@@ -75,6 +77,7 @@ type fakeClientStore struct {
 	owned         *postgres.VPNClient
 	ownedErr      error
 	created       []*postgres.VPNClient
+	deleted       []int64 // rows removed by the debit-first failure cleanup
 	expiryUpdated *time.Time
 	expiryErr     error
 }
@@ -95,6 +98,10 @@ func (f *fakeClientStore) UpdateExpiry(_ context.Context, _ int64, e time.Time, 
 		return f.expiryErr
 	}
 	f.expiryUpdated = &e
+	return nil
+}
+func (f *fakeClientStore) DeleteOwned(_ context.Context, clientID, _ int64) error {
+	f.deleted = append(f.deleted, clientID)
 	return nil
 }
 
@@ -149,22 +156,33 @@ func (f *fakeServerPicker) PickForCountry(_ context.Context, _ string) (int64, e
 }
 
 type fakePanelGateway struct {
-	called         bool
+	called         bool // panel MUTATION happened (CommitClient)
+	committed      int
 	trialCalled    bool
 	trialInboundID int
-	created        domain.PanelClient
-	createErr      error
+	created        domain.PanelClient // CreateTrialClient result
+	prepared       domain.PreparedClient
+	prepareErr     error
+	commitErr      error
+	createErr      error // trial path failure (CreateTrialClient)
 	renewCalled    bool
 	renewErr       error
 	renewClientID  string // panel client key passed to RenewClient (v1.38)
 }
 
-func (f *fakePanelGateway) CreateClient(_ context.Context, _ int64, _ int, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
-	f.called = true
-	if f.createErr != nil {
-		return domain.PanelClient{}, f.createErr
+func (f *fakePanelGateway) PrepareClient(_ context.Context, _ int64, _ int, _ string, _ string, _ int, _ int64, _ int64) (domain.PreparedClient, error) {
+	if f.prepareErr != nil {
+		return domain.PreparedClient{}, f.prepareErr
 	}
-	return f.created, nil
+	return f.prepared, nil
+}
+func (f *fakePanelGateway) CommitClient(_ context.Context, _ int64, _ domain.PreparedClient) error {
+	f.called = true
+	f.committed++
+	if f.commitErr != nil {
+		return f.commitErr
+	}
+	return nil
 }
 func (f *fakePanelGateway) CreateTrialClient(_ context.Context, _ int64, inboundID int, _ string, _ string, _ int, _ int64, _ int64) (domain.PanelClient, error) {
 	f.trialCalled = true

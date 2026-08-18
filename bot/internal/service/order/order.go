@@ -4,8 +4,8 @@
 // @for       Purchase & renewal: state machine, panel provisioning, atomic debit.
 // @uses      context, errors, time, internal/domain, internal/repository/postgres
 // @reason    Order state machine (pending→processing→completed|failed) with
-// per-flow money invariants: purchase debits only after panel success
-// (FR-04 AC-1); renewal debits first and refunds on failure (v1.37).
+// per-flow money invariants: purchase and renewal are both debit-first
+// (prepare → row → debit → panel commit) and refund on failure (v1.47).
 // @author    Dodi Rusmana <rusmanadodi@kentangtechstore.com>
 // @layer     service
 // @stability stable
@@ -46,10 +46,14 @@ type OrderStore interface {
 }
 
 // ClientStore persists VPN clients (postgres.ClientRepo implements it).
+// DeleteOwned is the failure cleanup of the debit-first purchase flow: a row
+// inserted before the panel commit is deleted when the debit or the panel call
+// fails (no orphaned row or account).
 type ClientStore interface {
 	Create(ctx context.Context, c *postgres.VPNClient) error
 	GetOwned(ctx context.Context, clientID, userID int64) (*postgres.VPNClient, error)
 	UpdateExpiry(ctx context.Context, clientID int64, expiresAt time.Time, trafficLimit *int64) error
+	DeleteOwned(ctx context.Context, clientID, userID int64) error
 }
 
 // UserStore debits balance atomically (postgres.UserRepo implements it).
@@ -72,8 +76,13 @@ type ServerPicker interface {
 
 // PanelGateway provisions clients on X-UI panels (serversvc.Service implements it).
 // inboundID pins the exact panel inbound the user chose (0 = match by protocol).
+// PrepareClient builds the record WITHOUT mutating the panel; the purchase flow
+// persists the row and debits, then CommitClient runs addClient — a panel
+// failure then only refunds + deletes the row (debit-first, no orphaned active
+// account, parity renewal v1.37).
 type PanelGateway interface {
-	CreateClient(ctx context.Context, serverID int64, inboundID int, email, protocol string, days int, trafficGB, ipLimit int64) (domain.PanelClient, error)
+	PrepareClient(ctx context.Context, serverID int64, inboundID int, email, protocol string, days int, trafficGB, ipLimit int64) (domain.PreparedClient, error)
+	CommitClient(ctx context.Context, serverID int64, p domain.PreparedClient) error
 	CreateTrialClient(ctx context.Context, serverID int64, inboundID int, email, protocol string, hours int, trafficGB, ipLimit int64) (domain.PanelClient, error)
 	RenewClient(ctx context.Context, serverID int64, clientID, email, protocol string, newExpiry time.Time) error
 }

@@ -157,8 +157,14 @@ func (s *Service) PanelClient(ctx context.Context, serverID int64) (*xui.Client,
 // 0 falls back to the first enabled inbound matching the protocol.
 // The expiry is computed from days (trial uses hours — see CreateTrialClient).
 func (s *Service) CreateClient(ctx context.Context, serverID int64, inboundID int, email, protocol string, days int, trafficGB, ipLimit int64) (domain.PanelClient, error) {
-	expiry := time.Now().AddDate(0, 0, days).UnixMilli()
-	return s.provisionClient(ctx, serverID, inboundID, email, protocol, trafficGB, ipLimit, expiry)
+	p, err := s.PrepareClient(ctx, serverID, inboundID, email, protocol, days, trafficGB, ipLimit)
+	if err != nil {
+		return domain.PanelClient{}, err
+	}
+	if err := s.CommitClient(ctx, serverID, p); err != nil {
+		return domain.PanelClient{}, err
+	}
+	return p.Panel, nil
 }
 
 // matchInbound finds the first enabled inbound with the given protocol.

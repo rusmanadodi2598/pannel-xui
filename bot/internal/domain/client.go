@@ -95,6 +95,19 @@ type PanelClient struct {
 	SubID          string
 }
 
+// PreparedClient is a client fully prepared for panel provisioning: the
+// bot-side record (for the vpn_clients row) plus the panel commit parameters.
+// It is built BEFORE any panel mutation so the order flow can persist the row
+// and debit balance first, then commit to the panel — a panel failure then only
+// needs a refund + row delete, never an orphaned active account (debit-first,
+// parity renewal v1.37).
+type PreparedClient struct {
+	Panel     PanelClient // bot-side record (creds, config link, subId, network/path)
+	ExpiryMs  int64       // exact panel expiry (ms epoch) — commit reuses it
+	TrafficGB int64       // quota bytes for the panel spec
+	IPLimit   int64       // per-client IP limit for the panel spec
+}
+
 // NewTrialClient builds a short-lived trial client record (FR-07 AC-2):
 // is_trial=true, quota 1 GB / 1 IP (default), expiry = now + hours.
 func NewTrialClient(userID, serverID int64, inboundID int, email, protocol, uuid, password string, hours int, trafficGB, ipLimit int64) (*VPNClient, error) {

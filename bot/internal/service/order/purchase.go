@@ -1,11 +1,11 @@
-// Package ordersvc also hosts the purchase fulfillment (FR-03/FR-04, M7 fix).
+// Package ordersvc also hosts the purchase fulfillment (FR-03/FR-04, v1.47 rewrite).
 //
 // @file      internal/service/order/purchase.go
 // @for       Purchase state machine with explicit server + inbound selection.
-// @uses      context, time, internal/domain, internal/repository/postgres
-// @reason    The buy flow pins the exact panel inbound the user picked; the
-// legacy auto-pick path stays for backward compatibility (M7 gap fix).
-//
+// @uses      context, errors, time, internal/domain, internal/repository/postgres
+// @reason    The buy flow pins the exact panel inbound the user picked; money
+// flow is debit-first (v1.47): prepare → insert row → debit → panel commit,
+// with auto-refund + row delete on failure — no orphaned unpaid account.
 // @author    Dodi Rusmana <rusmanadodi@kentangtechstore.com>
 // @layer     service
 // @stability stable
@@ -14,6 +14,7 @@ package ordersvc
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/kentangtech/bot-order/internal/domain"
@@ -37,10 +38,17 @@ type PurchaseResult struct {
 // Purchase buys a new VPN account (FR-03/FR-04). The caller picks the exact
 // panel (serverID) and inbound (inboundID) in the buy flow; protocol is the
 // picked inbound's protocol. Passing 0 for serverID+inboundID keeps the legacy
-// auto-pick path (server by country, protocol "vless"). Steps:
-// 1. live price + server pick   2. create pending order
-// 3. panel addClient (outside DB tx)   4. atomic debit + ledger
-// 5. client row + order completed — all only after panel success.
+// auto-pick path (server by country, protocol "vless"). Money flow (v1.47):
+//  1. live price + server pick + idempotence guard (FindInFlight)
+//  2. order pending → processing
+//  3. prepare the client (read-only: inbound + credentials + share link)
+//  4. insert the client row (no panel mutation yet, no money moved)
+//  5. atomic debit (balance >= price — never negative) BEFORE the panel call
+//  6. panel commit (addClient) — the last fallible step
+//
+// A failure before step 6 leaves no panel account (clean failed order); a
+// commit failure refunds the exact amount + deletes the row (auto-refund,
+// parity renewal v1.37) — an unpaid active account is impossible.
 func (s *Service) Purchase(ctx context.Context, user *postgres.User, country string, days, serverID, inboundID int, protocol string) (*PurchaseResult, error) {
 	plan, err := s.plans.GetPlan(ctx, country, days)
 	if err != nil {
@@ -87,41 +95,62 @@ func (s *Service) Purchase(ctx context.Context, user *postgres.User, country str
 		return nil, err
 	}
 
+	// Step 3: prepare WITHOUT mutating the panel (read-only GetInbounds +
+	// credentials + share link). A failure here is a clean failed order — no
+	// row, no money, no panel account.
 	email := clientEmail(order.OrderID)
-	pc, err := s.panels.CreateClient(ctx, int64(serverID), inboundID, email, order.Protocol, days, int64(order.TrafficGB), int64(order.IPLimit))
+	prepared, err := s.panels.PrepareClient(ctx, int64(serverID), inboundID, email, order.Protocol, days, int64(order.TrafficGB), int64(order.IPLimit))
 	if err != nil {
 		_ = order.MarkFailed(err.Error())
 		_ = s.orders.Save(ctx, toOrderRow(order))
 		return &PurchaseResult{OrderID: order.OrderID, Status: order.Status, ErrorMessage: err.Error()}, ErrFulfillFailed
 	}
 
-	client, err := domain.NewVPNClient(user.ID, int64(serverID), pc.InboundID, email, order.Protocol, pc.UUID, pc.Password, days, int64(order.TrafficGB), int64(order.IPLimit))
+	// Step 4: client row BEFORE the panel call (v1.47). The credentials are
+	// already generated, so the row is complete. A failure here is still a
+	// clean failed order (no money moved, no panel mutation).
+	client, err := domain.NewVPNClient(user.ID, int64(serverID), prepared.Panel.InboundID, email, order.Protocol, prepared.Panel.UUID, prepared.Panel.Password, days, int64(order.TrafficGB), int64(order.IPLimit))
 	if err != nil {
 		_ = order.MarkFailed("gagal mencatat akun")
 		_ = s.orders.Save(ctx, toOrderRow(order))
 		return &PurchaseResult{OrderID: order.OrderID, Status: order.Status, ErrorMessage: err.Error()}, ErrFulfillFailed
 	}
-	client.ConfigLink = pc.ConfigLink
-	client.InboundNetwork = pc.InboundNetwork
-	client.InboundPath = pc.InboundPath
+	client.ConfigLink = prepared.Panel.ConfigLink
+	client.InboundNetwork = prepared.Panel.InboundNetwork
+	client.InboundPath = prepared.Panel.InboundPath
 	// FR-13: persist subId + subscription URLs (only the .txt export ships them).
-	client.SubID = pc.SubID
-	client.SubscriptionURL = s.subLinks.URL(pc.SubID)
-	client.SubscriptionJSONURL = s.subLinks.JSONURL(pc.SubID)
+	client.SubID = prepared.Panel.SubID
+	client.SubscriptionURL = s.subLinks.URL(prepared.Panel.SubID)
+	client.SubscriptionJSONURL = s.subLinks.JSONURL(prepared.Panel.SubID)
 	row := toClientRow(client)
 	if err := s.clients.Create(ctx, row); err != nil {
-		// Panel provisioned but the DB record failed — no money taken yet; the
-		// orphan panel client is cleaned up by M6 reconciliation.
-		_ = order.MarkFailed("gagal menyimpan akun, panel client perlu dirollback")
+		_ = order.MarkFailed("gagal menyimpan akun")
 		_ = s.orders.Save(ctx, toOrderRow(order))
 		return &PurchaseResult{OrderID: order.OrderID, Status: order.Status, ErrorMessage: err.Error()}, ErrFulfillFailed
 	}
 
-	// Client row exists BEFORE the debit: a debit failure leaves an unpaid,
-	// recoverable record instead of charging the user without an account.
+	// Step 5: debit-first — money moves BEFORE the panel mutation. The row
+	// already exists, so a debit failure only deletes the row: never an unpaid
+	// panel account (the panel has not been touched yet).
 	balanceAfter, err := s.users.Debit(ctx, user.ID, plan.Price, order.OrderID)
 	if err != nil {
+		_ = s.clients.DeleteOwned(ctx, row.ID, user.ID) // best-effort cleanup
 		_ = order.MarkFailed("debit gagal, akun belum dibayar")
+		_ = s.orders.Save(ctx, toOrderRow(order))
+		result := &PurchaseResult{OrderID: order.OrderID, Status: order.Status, ErrorMessage: err.Error()}
+		if errors.Is(err, postgres.ErrInsufficientBalance) {
+			return result, ErrInsufficientBalance
+		}
+		return result, ErrFulfillFailed
+	}
+
+	// Step 6: panel commit — the last fallible step. A failure refunds the
+	// exact amount (Credit + ledger) and deletes the row: no money lost, no
+	// orphaned account (v1.37 debit-first + auto-refund parity).
+	if err := s.panels.CommitClient(ctx, int64(serverID), prepared); err != nil {
+		s.refund(ctx, user.ID, plan.Price, order.OrderID)
+		_ = s.clients.DeleteOwned(ctx, row.ID, user.ID)
+		_ = order.MarkFailed(err.Error())
 		_ = s.orders.Save(ctx, toOrderRow(order))
 		return &PurchaseResult{OrderID: order.OrderID, Status: order.Status, ErrorMessage: err.Error()}, ErrFulfillFailed
 	}

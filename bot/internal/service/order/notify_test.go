@@ -45,7 +45,7 @@ func TestPurchase_GivenCompleted_ThenAdminNotifiedOnce(t *testing.T) {
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.created = domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "ktsx@vpn.kt", UUID: "u1", Protocol: "vless"}}
 	notify := &fakeNotifier{}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels, notify)
 
@@ -84,7 +84,7 @@ func TestPurchase_GivenPanelFailure_ThenNotNotified(t *testing.T) {
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.createErr = errors.New("panel unreachable")
+	store.panels.prepareErr = errors.New("panel unreachable")
 	notify := &fakeNotifier{}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels, notify)
 
@@ -101,7 +101,7 @@ func TestPurchase_GivenDebitFailure_ThenNotNotified(t *testing.T) {
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.created = domain.PanelClient{InboundID: 9, Email: "k@vpn.kt", UUID: "u", Protocol: "vless"}
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "k@vpn.kt", UUID: "u", Protocol: "vless"}}
 	store.users.debitErr = errors.New("db down")
 	notify := &fakeNotifier{}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels, notify)
@@ -191,7 +191,7 @@ func TestPurchase_GivenNilNotifier_ThenNoPanic(t *testing.T) {
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.created = domain.PanelClient{InboundID: 9, Email: "k@vpn.kt", UUID: "u", Protocol: "vless"}
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "k@vpn.kt", UUID: "u", Protocol: "vless"}}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels)
 
 	if _, err := svc.Purchase(context.Background(), &postgres.User{ID: 1, Balance: 50000}, "ID", 30, 0, 0, "vless"); err != nil {
@@ -204,7 +204,7 @@ func TestPurchase_GivenNotifierError_ThenOrderStillCompleted(t *testing.T) {
 	store := newFakeStores()
 	store.plans.plan = plan
 	store.servers.serverID = 5
-	store.panels.created = domain.PanelClient{InboundID: 9, Email: "k@vpn.kt", UUID: "u", Protocol: "vless"}
+	store.panels.prepared = domain.PreparedClient{Panel: domain.PanelClient{InboundID: 9, Email: "k@vpn.kt", UUID: "u", Protocol: "vless"}}
 	notify := &fakeNotifier{err: errors.New("telegram down")}
 	svc := New(store.orders, store.clients, store.users, store.plans, store.servers, store.panels, notify)
 
