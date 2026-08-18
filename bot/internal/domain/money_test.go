@@ -11,6 +11,7 @@
 package domain
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,38 @@ func TestMoneyFormatIDR(t *testing.T) {
 func TestNewMoney_GivenNegative_ThenError(t *testing.T) {
 	if _, err := NewMoney(-1); err == nil {
 		t.Fatal("NewMoney(-1): expected error")
+	}
+}
+
+func TestMoneyAdd_GivenSum_ThenAdded(t *testing.T) {
+	got, err := Money(4000).Add(Money(3000))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if got != Money(7000) {
+		t.Errorf("Add = %d, want 7000", got)
+	}
+}
+
+func TestMoneyAdd_GivenOverflow_ThenError(t *testing.T) {
+	if _, err := Money(math.MaxInt64).Add(Money(1)); err != ErrMoneyOverflow {
+		t.Errorf("Add overflow: err = %v, want ErrMoneyOverflow", err)
+	}
+}
+
+func TestMoneySub_GivenSufficient_ThenDifference(t *testing.T) {
+	got, err := Money(7000).Sub(Money(2000))
+	if err != nil {
+		t.Fatalf("Sub: %v", err)
+	}
+	if got != Money(5000) {
+		t.Errorf("Sub = %d, want 5000", got)
+	}
+}
+
+func TestMoneySub_GivenNegativeResult_ThenError(t *testing.T) {
+	if _, err := Money(1000).Sub(Money(2000)); err != ErrNegativeMoney {
+		t.Errorf("Sub negative: err = %v, want ErrNegativeMoney", err)
 	}
 }
 

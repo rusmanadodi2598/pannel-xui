@@ -16,6 +16,7 @@ package domain
 
 import (
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,19 +25,38 @@ import (
 // Money is an immutable amount of Indonesian Rupiah (whole rupiah).
 type Money int64
 
+// ErrNegativeMoney is returned when an operation would produce a negative
+// amount — Money's core invariant is that it is never negative.
+var ErrNegativeMoney = errors.New("money cannot be negative")
+
+// ErrMoneyOverflow is returned when an addition would overflow int64.
+var ErrMoneyOverflow = errors.New("money overflow")
+
 // NewMoney validates a non-negative amount and wraps it.
 func NewMoney(rupiah int64) (Money, error) {
 	if rupiah < 0 {
-		return 0, fmt.Errorf("money cannot be negative: %d", rupiah)
+		return 0, fmt.Errorf("%w: %d", ErrNegativeMoney, rupiah)
 	}
 	return Money(rupiah), nil
 }
 
-// Add returns the sum (never negative for valid inputs).
-func (m Money) Add(other Money) Money { return m + other }
+// Add returns the sum, guarding against int64 overflow (AGENTS.md §2.2).
+func (m Money) Add(other Money) (Money, error) {
+	sum := m + other
+	if other > 0 && sum < m {
+		return 0, ErrMoneyOverflow
+	}
+	return sum, nil
+}
 
-// Sub returns the difference; caller must guard with LessThan to avoid negatives.
-func (m Money) Sub(other Money) Money { return m - other }
+// Sub returns the difference, rejecting a negative result so the non-negative
+// invariant is preserved — callers no longer need to pre-check with LessThan.
+func (m Money) Sub(other Money) (Money, error) {
+	if other > m {
+		return 0, ErrNegativeMoney
+	}
+	return m - other, nil
+}
 
 // LessThan reports whether m is strictly smaller than other.
 func (m Money) LessThan(other Money) bool { return m < other }
