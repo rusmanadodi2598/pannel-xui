@@ -185,17 +185,21 @@
       *(verified staging: akun trial `ktsj2h9hvmkvpn` tampil dengan badge
       Trial · di list Akun)*
 
-## 4. Topup (FR-06, M5 partial)
+## 4. Topup (FR-06, M5 ✅ — v1.48)
 
 - [x] Top Up → pilih nominal / input custom → ringkasan (fee QRIS + PPN)
       *(verified staging v1.13 (M5) + v142: topup:menu render; ringkasan
       ber-brand v1.43)*
 - [x] Nominal < MIN / > MAX → ditolak dengan pesan jelas
-- [x] Konfirmasi → stub gateway: teks unavailable yang ramah (**tanpa panic**)
+- [ ] Konfirmasi → checkout QRIS dari PG Aggregate (persist row → create
+      charge → confirm → link checkout) — **butuh merchant KTS_* live**
+      (unit/integration test hijau v1.48; verifikasi alur nyata menyusul)
 - [x] FSM custom-input: teks tidak valid → re-prompt; `/cancel` & `/start`
       membersihkan FSM
-- [ ] *API KentangTech (QRIS) masih di-defer* — verifikasi ulang saat Go
-      rewrite ship (StubGateway → client nyata)
+- [ ] Webhook `pg.charge`: signature valid → kredit NET sekali; signature
+      salah → 403; event bukan `pg.charge` → 400; duplikat `X-Webhook-Id` →
+      kredit sekali; status `failed`/`expired` → tanpa kredit — **butuh
+      sandbox/live gateway** (test handler hijau v1.48)
 
 ## 5. Admin (FR-11)
 

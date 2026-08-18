@@ -3,7 +3,7 @@
 | Field            | Value                                                              |
 |------------------|--------------------------------------------------------------------|
 | **Dokumen**      | 001-PRD-BOT-ORDER                                                  |
-| **Status**       | Draft v1.46 — M0–M4 ✅ · M5 partial (flow ✅, API 🔜) · M6 ✅ · M7 ✅ (hardening + **detail akun & ekspor .txt** + **config v2Ray dual TLS/non-TLS path dinamis** + **Riwayat FR-14 ✅** + **Bantuan FR-15 ✅** + **pagination Akun FR-08 AC-1 ✅** + **hapus akun FR-08 AC-4 ✅** + **traffic & refresh manual FR-08 AC-3 ✅** + **convert YAML Clash/Meta FR-08 AC-2 ✅** + **status display list Akun FR-08 AC-1 ✅** + **detail akun lengkap AC-1 (Limit IP + traffic terpakai) ✅** + **hapus akun tercatat di Riwayat AC-4 ✅** + **revisi minor UI akun (UUID/Password protocol-aware; URL build hanya di ekspor .txt; sukses Beli/Trial tanpa URL) ✅** + **renew paid-only + idempotence + debit-first auto-refund ✅** + **adjust saldo admin ✅** + **FR-11 lengkap (manajemen server, statistik, audit log) ✅** + **notifikasi order sukses ke grup admin (FR-04 AC) ✅** + **UX keyboard zigzag 2-1-2-1 ✅** + **brand KENTANG TECH konsisten ✅** + **worker health check (server mati tidak dijual) + trial cleanup ✅** + **FR-13 subscription URL ✅ (sub_id dipersist, URL di ekspor .txt — Opsi 2, akun lama tanpa backfill)**) — **UI copy policy: teks tanpa emoji (icon hanya di tombol navigasi; banner brand pengecualian)** |
+| **Status**       | Draft v1.48 — M0–M4 ✅ · M5 ✅ (v1.48: PG Aggregate charge + webhook pg.charge — §15.7) · M6 ✅ · M7 ✅ (hardening + **detail akun & ekspor .txt** + **config v2Ray dual TLS/non-TLS path dinamis** + **Riwayat FR-14 ✅** + **Bantuan FR-15 ✅** + **pagination Akun FR-08 AC-1 ✅** + **hapus akun FR-08 AC-4 ✅** + **traffic & refresh manual FR-08 AC-3 ✅** + **convert YAML Clash/Meta FR-08 AC-2 ✅** + **status display list Akun FR-08 AC-1 ✅** + **detail akun lengkap AC-1 (Limit IP + traffic terpakai) ✅** + **hapus akun tercatat di Riwayat AC-4 ✅** + **revisi minor UI akun (UUID/Password protocol-aware; URL build hanya di ekspor .txt; sukses Beli/Trial tanpa URL) ✅** + **renew paid-only + idempotence + debit-first auto-refund ✅** + **adjust saldo admin ✅** + **FR-11 lengkap (manajemen server, statistik, audit log) ✅** + **notifikasi order sukses ke grup admin (FR-04 AC) ✅** + **UX keyboard zigzag 2-1-2-1 ✅** + **brand KENTANG TECH konsisten ✅** + **worker health check (server mati tidak dijual) + trial cleanup ✅** + **FR-13 subscription URL ✅ (sub_id dipersist, URL di ekspor .txt — Opsi 2, akun lama tanpa backfill)**) — **UI copy policy: teks tanpa emoji (icon hanya di tombol navigasi; banner brand pengecualian)** |
 | **Tanggal**      | 2026-08-12                                                         |
 | **Penulis**      | Dodi Rusmana `<rusmanadodi@kentangtechstore.com>`                  |
 | **Scope Build**  | Hanya direktori `/bot` — **tidak menyentuh source panel x-ui**     |
@@ -114,11 +114,12 @@ Sumber referensi: `/home/rusmanadodi/kentangtech-xui/client-vpn`
 - Rate limit: **30 request/menit/user** (window 60 detik).
 - Gate grup: wajib join grup Telegram (cache keanggotaan 6 jam).
 - Nominal topup: min Rp 5.000, maks Rp 5.000.000 (value = saldo **bersih** yang diterima).
-- QRIS berlaku **15 menit**; nominal **quick-pick** (Rp 10.000 / 25.000 / 50.000 /
-  100.000 / 200.000 / 500.000) + **custom input**; input FSM bisa dibatalkan
-  dengan `/cancel`.
-- Formula fee: `gross = net / (1 − fee_rate × (1 + PPN))`, dibulatkan ke atas
-  kelipatan 100 (effective rate **2,775%**); saldo kredit = `net` (detail §15.7).
+- QRIS berlaku sesuai `KTS_CHARGE_TTL_MIN` (default 24 jam — v1.48; sebelumnya
+  15 menit); nominal **quick-pick** (Rp 10.000 / 25.000 / 50.000 / 100.000 /
+  200.000 / 500.000) + **custom input**; input FSM bisa dibatalkan dengan `/cancel`.
+- Formula fee (v1.48 dihitung **gateway**): `gross = ceil(net / 0.97225)`
+  (2,5% MDR + 11% PPN — effective rate **2,775%**); saldo kredit = `net`
+  (detail §15.7).
 
 ---
 
@@ -224,11 +225,17 @@ Sumber referensi: `/home/rusmanadodi/kentangtech-xui/client-vpn`
 - `pending → processing → completed | failed`; pada `completed`: akun dibuat di
   panel, saldo didebit atomik, config link + sub URL dikirim ke user, notifikasi
   ke grup admin.
-- **AC-1 (Atomicity)**: debit saldo & pembuatan client X-UI idempoten (tidak ada
+- **AC-1 (Atomicity)**: alur **debit-first + auto-refund** (v1.47, parity
+  renew v1.37): order `pending→processing` → **prepare client** (read-only,
+  tanpa sentuh panel) → **insert row `vpn_clients`** (kredensial sudah
+  digenerate) → **debit saldo atomik** (guard `balance >= harga`, tidak pernah
+  minus) → **commit ke panel** (`addClient`). Gagal sebelum debit → `failed`
+  bersih (tanpa akun panel, tanpa uang terpotong); gagal setelah debit →
+  **refund atomik + ledger** + hapus row, order `failed` — akun aktif tanpa
+  bayar mustahil. Debit saldo & pembuatan client X-UI idempoten (tidak ada
   double-charge jika webhook/retry ganda); error dari panel tercatat di
-  `error_message` dan order berstatus `failed` (saldo **tidak** didebit);
-  transaksi DB atomik + unique constraint `order_id` + lock per-user
-  (`bot:lock:user:{id}`) mencegah order ganda.
+  `error_message`; transaksi DB atomik + unique constraint `order_id` + lock
+  per-user (`bot:lock:user:{id}`) mencegah order ganda.
 - **AC-2 (User Feedback)**: selama `processing` tampilkan "⏳ Memproses order...";
   selesai → kirim config link + sub URL; gagal → pesan error ramah + tombol
   ulangi; user bisa batalkan input FSM dengan `/cancel`.
@@ -241,21 +248,28 @@ Sumber referensi: `/home/rusmanadodi/kentangtech-xui/client-vpn`
 
 ### FR-06 Topup Saldo QRIS (Payment)
 - `/topup` → pilih nominal **quick-pick** (10k/25k/50k/100k/200k/500k) atau
-  **custom input** → bot hitung gross (fee) → panggil **KentangTech API**
-  `POST /api/v1/autobuy-saldo/topup` → tampilkan **QR PNG** + caption
-  (order ID, saldo diterima, total bayar, fee, berlaku 15 menit) → webhook
-  `POST /api/v1/webhooks/payments` (HMAC `X-KTS-Signature`) → kredit saldo
-  net → notifikasi user + grup admin.
+  **custom input** → bot hitung gross (fee) → **persist order topup** (orderId
+  `tp_*` → row `orders` + `payments`) → **KentangTech PG Aggregate**
+  `POST /api/v1/pg/charges` (amount = **NET**) →
+  `POST /api/v1/pg/charges/{orderId}/confirm` → tampilkan **checkout QRIS**
+  (URL checkout + caption: order ID, saldo diterima, total bayar, fee) →
+  webhook masuk `POST /api/v1/webhooks/payments` (`X-Webhook-Event:
+  pg.charge`) → kredit saldo net → notifikasi user + grup admin.
 - **AC-1 (Alur)**: nominal di antara min/max (Rp 5.000 – Rp 5.000.000, value =
-  saldo **bersih** yang diterima); gross dihitung formula §15.7; user dapat
-  **cek status** (`topup:status:{orderID}` → popup alert, status
-  `PENDING/SUCCESS/FAILED/EXPIRED`); input custom bisa dibatalkan `/cancel`;
-  QR gagal dirender → fallback tampilkan `qr_string` teks.
-- **AC-2 (Keamanan)**: HMAC `X-KTS-Signature` diverifikasi constant-time;
-  **idempotency via Redis `SETNX` (`bot:topup:processed:{orderID}`, TTL
-  7 hari)** — webhook ganda tidak double-credit; fee & net dicatat di
-  `payments` + ledger; event `TOPUP_SUCCESS / TOPUP_FAILED / PAYMENT_FAILED /
-  PAYMENT_EXPIRED / PAYMENT_PENDING` ditangani sesuai reference.
+  saldo **bersih** yang diterima); gross (fee) dihitung **gateway** — quote
+  bot = estimasi formula §15.7 untuk display; user dapat **cek status** charge
+  (`GET /api/v1/pg/charges/{orderId}` — `kts.GetCharge`, ops manual; webhook
+  tetap jalur primer karena reconciler gateway re-enqueue `pg.notify`); input
+  custom bisa dibatalkan `/cancel`; checkout gagal → row ditandai, order
+  failed bersih (tanpa kredit).
+- **AC-2 (Keamanan)**: webhook diverifikasi **`X-Webhook-Signature`**
+  (HMAC-SHA256 atas **raw body**, constant-time) → 403 bila salah; branch
+  `X-Webhook-Event: pg.charge`; **idempotency via Redis `SETNX`
+  (`bot:webhook:{X-Webhook-Id}`, TTL 7 hari)** — webhook ganda tidak
+  double-credit; settlement (kredit NET + mark) dalam **satu transaksi
+  conditional** `pending → terminal` — webhook & poll race aman; fee & net
+  dicatat di `payments` + ledger; event `succeeded / failed / expired`
+  ditangani (hanya `succeeded` yang kredit).
 - **AC-3 (Notifikasi)**: sukses → pesan topup berhasil (gross, net, fee,
   saldo baru) + notifikasi grup admin (`notify_topup` pattern reference).
 
@@ -418,8 +432,8 @@ Sumber referensi: `/home/rusmanadodi/kentangtech-xui/client-vpn`
                               │
                               ▼
    ┌──────────────────────────────────────────────┐
-   │ KentangTech Payment API (QRIS)               │
-   │ POST create payment → callback /api/v1        │
+   │ KentangTech PG Aggregate (QRIS, spec 015)    │
+   │ POST /api/v1/pg/charges → webhook pg.charge  │
    └──────────────────────────────────────────────┘
 ```
 
@@ -434,7 +448,7 @@ Sumber referensi: `/home/rusmanadodi/kentangtech-xui/client-vpn`
 | `service/user`        | User, balance, ledger, ban.                                                  |
 | `service/client`      | Tracking akun VPN (sync traffic, status).                                   |
 | `repository/xui`      | Klien REST panel: login/session cache, inbounds, CRUD client, traffic, onlines (M2). |
-| `service/payment`     | Integrasi QRIS KentangTech + pemrosesan webhook (idempoten).                |
+| `service/topup`       | Quote fee §15.7, persist order, PG Aggregate charge + settlement webhook idempoten (v1.48).      |
 | `service/pricing`     | Pricing per negara/paket (DB) + reload.                                     |
 | `service/notification`| Kirim pesan ke user/grup; template i18n.                                    |
 | `worker/`             | Scheduler jobs (notifikasi, sync traffic, trial cleanup, health check).     |
@@ -738,64 +752,68 @@ POST /xui/API/inbounds/addClient
   terstruktur bot (`XUIError`) dengan kode kategori: `AUTH`, `NETWORK`,
   `DUPLICATE_EMAIL`, `INBOUND_FULL`, `TIMEOUT`, `UNKNOWN`.
 
-### 15.7 Kontrak API Pembayaran (KentangTech) — diverifikasi dari reference
-Base URL: `{API_BASE_URL}` (env; default `https://hostinger.kentangtechstore.com`).
-Provider: **Midtrans QRIS** via kentangtech-api. Timeout: 30 s.
+### 15.7 Kontrak API Pembayaran — PG Aggregate (KentangTech, spec 015)
+Base URL: `KTS_BASE_URL` (env; default `https://gateway.kentangtechstore.com`).
+Provider: **Midtrans QRIS** via kentangtech payment gateway (white-label —
+spec `015-SPEC-PG-AGGREGATE.md`, transport webhook `013-PUBLIC-MERCHANT-OUTBOX-WEBHOOKS.md`).
+Timeout: 30 s.
 
-**Headers (semua request):**
-```
-Content-Type: application/json
-Accept: application/json
-X-API-Key: {TOPUP_API_KEY}
-X-Webhook-Secret: {TOPUP_WEBHOOK_SECRET}
-```
+Satu id E2E: `orderId` client-supplied (bot: `tp_*`, charset `[A-Za-z0-9._-]`,
+4–50) → payment_id + Midtrans order_id + webhook refId. **Amount = NET** yang
+diterima merchant; gross (2,5% MDR + 11% PPN, `ceil(net / 0.97225)`) dihitung
+**gateway** — bot mengirim NET dan mengkredit NET dari order lokal.
 
-**1) Buat QRIS — `POST /api/v1/autobuy-saldo/topup`**
+**S2S outbound (semua request) — chain HMAC (001 §2.3):**
+```
+X-API-Key: {KTS_API_KEY}
+X-Timestamp: {unix_seconds}            // toleransi ±300 s
+X-Nonce: {uuidv4}
+Idempotency-Key: {orderId}
+X-Signature: sha256=hex(hmac_sha256({KTS_SECRET}, canonical))
+canonical = "v1\n{apiKey}\n{ts}\n{nonce}\n{METHOD}\n{path}\n{hex_sha256(body)}"
+```
+Envelope respon: `{ "data": {...} }`; error: `{ "error": { "code", "message" } }`.
+
+**1) Create charge — `POST /api/v1/pg/charges`**
 Body:
 ```json
-{
-  "telegram_user_id": 123456789,
-  "amount": 10280,          // GROSS yang dibayar user (sudah + fee)
-  "net_amount": 10000,      // saldo bersih yang dikredit (opsional)
-  "first_name": "Budi",
-  "username": "@budi",
-  "phone_number": "123456789@telegram"   // default "{tgid}@telegram"
-}
+{ "orderId": "tp_...", "amount": { "amount": 10000, "currency": "IDR" },
+  "description": "topup saldo" }
 ```
-Respon 200:
-```json
-{ "order_id": "...", "qr_string": "000201010211...", "amount": 10280,
-  "expires_at": "...", "message": "QR Code berhasil dibuat" }
-```
-Error (non-200): field `detail` (fallback teks HTTP).
+→ 201 `created` (tanpa provider call); replay `orderId` sama → 200;
+`orderId` dipakai merchant lain → 409 `DUPLICATE_ORDER`; auth gagal → 401.
 
-**2) Cek status — `GET /api/v1/autobuy-saldo/status/{order_id}`**
-Respon 200:
-```json
-{ "order_id": "...", "status": "PENDING|SUCCESS|FAILED|EXPIRED",
-  "amount": 10280, "created_at": "...", "settled_at": null }
-```
-`404` → order tidak ditemukan (tidak ada data).
+**2) Confirm — `POST /api/v1/pg/charges/{orderId}/confirm`**
+→ 202 `pending` + `checkoutUrl` (state-first: pending di-persist sebelum
+Midtrans dipanggil). Bot menampilkan checkout QRIS ke user.
 
-**3) Webhook callback — `POST /api/v1/webhooks/payments` (di bot)**
-Header `X-KTS-Signature: hmac_sha256_hex(compact_json_body, TOPUP_WEBHOOK_SECRET)`
-(compact JSON = `json.dumps(data, separators=(',',':'))`, diverifikasi
-constant-time). **Deploy note:** URL callback di sisi KentangTech harus
-mengarah ke `https://{BOT_DOMAIN}/api/v1/webhooks/payments`.
-Body:
+**3) Verify — `GET /api/v1/pg/charges/{orderId}`**
+→ 200 detail charge (status `created|pending|paid|expired|failed|refunded`,
+gross) / 404 tidak ditemukan. Dipakai poll manual/ops; webhook tetap jalur
+primer — reconciler gateway re-enqueue `pg.notify` utk charge yang webhook-nya
+hilang (015 Phase 6.1).
+
+**4) Webhook callback — `POST /api/v1/webhooks/payments` (di bot)**
+Header: `X-Webhook-Signature: sha256=hex(hmac_sha256({KTS_SECRET}, RAW body))`
+(diverifikasi constant-time), `X-Webhook-Event: pg.charge`,
+`X-Webhook-Id: pg.charge.{orderId}.{status}` (alphanumeric + `._-`, tanpa `:`).
+**Deploy note:** webhook_url merchant di sisi gateway harus mengarah ke
+`https://{BOT_DOMAIN}/api/v1/webhooks/payments`. Body:
 ```json
 {
-  "event": "TOPUP_SUCCESS | TOPUP_FAILED | PAYMENT_FAILED | PAYMENT_EXPIRED | PAYMENT_PENDING",
-  "order_id": "VPN-TOPUP-xxx",
-  "telegram_user_id": 123456789,
-  "amount": 10280,             // gross
-  "net_amount": 10000,         // net yang dikredit
-  "execution_result": { },     // opsional (detail error)
-  "error" | "message" | "status_message": "..."
+  "eventType": "pg.charge",
+  "orderId": "tp_xxx", "refId": "tp_xxx",
+  "status": "succeeded | failed | expired",
+  "amount": { "amount": 10280, "currency": "IDR" },   // GROSS — jangan utk kredit
+  "providerTrxId": "...", "paidAt": "...",
+  "errorCode": "", "errorMsg": "", "occurredAt": "..."
 }
 ```
-Behavior: sukses → kredit `net_amount` (idempoten, §FR-06); gagal/expired →
-notif user tanpa kredit; pending → diabaikan (user lihat QR).
+Behavior (v1.48): `succeeded` → kredit **NET dari order lokal** + mark
+`pending → terminal` dalam satu transaksi conditional (webhook & poll race
+aman, §FR-06 AC-2); `failed`/`expired` → tanpa kredit, order ditandai;
+**2xx hanya setelah persist durable** — non-2xx → gateway retry (max 5,
+backoff 30 s × attempt) → dead-letter (013 §2).
 
 **4) Formula fee (parity `calculate_qris_gross_amount`)**
 ```
@@ -831,8 +849,9 @@ QRIS berlaku **15 menit** (capture `expires_at` dari respon create).
 1. **Secret management** — semua via env; tanpa hardcode; tanpa secret di log.
    Kredensial panel per server dienkripsi AES-256-GCM (`ENCRYPTION_KEY`).
 2. **Webhook Telegram** — secret token diverifikasi constant-time; HTTPS wajib.
-3. **Payment webhook** — HMAC-SHA256 (`X-KTS-Signature`) constant-time compare;
-   idempotency `SETNX`; replay ditolak.
+3. **Payment webhook** — `X-Webhook-Signature` (HMAC-SHA256 raw body, 013 §2.2)
+   constant-time compare; branch `X-Webhook-Event`; idempotency `SETNX`
+   (`X-Webhook-Id`); replay ditolak.
 4. **Rate limiting** — 30 aksi/menit/user (Redis sliding window); limit trial.
 5. **Admin** — hanya `ADMIN_IDS`; route admin dicek middleware.
 6. **Input validation** — nominal topup (min/max), durasi, email; semua input
@@ -895,13 +914,14 @@ docker-compose.yml
 | `RATE_LIMIT_REQUESTS`    | `30`                                    | Rate limit per menit             |
 | `TIME_LOCATION`          | `Asia/Jakarta`                          | Timezone                         |
 | `XUI_API_TIMEOUT`        | `30`                                    | Timeout panggil panel            |
-| `API_BASE_URL`           | `https://hostinger.kentangtechstore.com`| KentangTech payment API          |
-| `TOPUP_API_KEY`          | (secret)                                | API key topup                    |
-| `TOPUP_WEBHOOK_SECRET`   | (secret)                                | HMAC payment webhook             |
+| `KTS_BASE_URL`           | `https://gateway.kentangtechstore.com`  | Base URL PG Aggregate (015)      |
+| `KTS_API_KEY`            | (secret)                                | API key merchant (S2S)           |
+| `KTS_SECRET`             | (secret, ≥ 16 char)                     | secretKey: sign S2S + verify webhook |
+| `KTS_CHARGE_TTL_MIN`     | `1440`                                  | TTL charge (default 24 jam)      |
 | `MIN/MAX_TOPUP_AMOUNT`   | `5000` / `5000000`                      | Batas nominal topup              |
-| `QRIS_FEE_PERCENT`       | `0.025`                                 | Fee QRIS 2,5%                    |
+| `QRIS_FEE_PERCENT`       | `0.025`                                 | Fee QRIS 2,5% (quote display; gross-up nyata di gateway) |
 | `QRIS_PPN_PERCENT`       | `0.11`                                  | PPN atas fee 11%                 |
-| `QRIS_EXPIRY_MINUTES`    | `15`                                    | Masa berlaku QRIS (referensi)    |
+| `QRIS_EXPIRY_MINUTES`    | `15`                                    | Referensi (TTL aktual = `KTS_CHARGE_TTL_MIN`) |
 | `LOG_LEVEL`              | `INFO`                                  | `DEBUG` untuk development        |
 | `PANEL_*` (opsional)     | —                                       | Kredensial panel awal / seed     |
 
@@ -913,7 +933,8 @@ docker-compose.yml
 |--------------------|----------------------------------------------------------------------|
 | Unit               | Service order (state machine, debit), pricing, money (aritmatika IDR), format link, crypto. |
 | Repository         | **Integration test terhadap PG/Redis lokal (staging host)**: `bot_test` DB + Redis DB 15; verifikasi up (7 tabel/kolom/index/UNIQUE per §13), down (rollback semua), idempotensi rerun; Redis: ping, set/get, SetNX idempotency. Override DSN via `TEST_DATABASE_URL` / `TEST_REDIS_URL`. Tanpa `t.Skip` (AGENTS.md §2.1). |
-| Handler (httptest) | `POST /api/v1/webhooks/telegram` (valid/invalid secret), `POST /api/v1/webhooks/payments` (HMAC valid/gagal/duplikat), `GET /api/v1/health`. |
+| Handler (httptest) | `POST /api/v1/webhooks/telegram` (valid/invalid secret), `POST /api/v1/webhooks/payments` (signature valid/salah, event salah, duplikat `X-Webhook-Id`, settle sukses/expired), `GET /api/v1/health`. |
+| KTS client         | Signer vector HMAC (canonical §15.7, byte-exact) + httptest gateway: 201 create, 202 confirm, 404 not-found, 409 duplicate, 401 unauthorized. |
 | XUI client         | Mock HTTP server (httptest) untuk login, session expire → relogin, addClient payload golden test. |
 | Race               | `go test -race ./...` — wajib untuk paket goroutine (webhook, worker). |
 | E2E (opsional)     | Bot + panel uji terhadap instance panel dev (docker) untuk alur beli penuh. |
@@ -930,9 +951,9 @@ docker-compose.yml
 | **M2**    | X-UI client (login, session cache, CRUD client, traffic) + unit test mock server | ✅ selesai (v1.7) |
 | **M3**    | Core webhook go-telegram/bot: setWebhook, secret token, dispatcher, middleware (gate/ban/rate limit), menu | ✅ selesai (v1.8) |
 | **M4**    | Order flow: pricing, beli, renewal, fulfillment state machine, ledger | ✅ selesai (v1.11) |
-| **M5**    | Topup QRIS: KentangTech API + webhook HMAC + idempotency + notif | 🔶 partial (v1.13): menu/flow ✅, API di-defer (StubGateway) — **satu-satunya gap fitur tersisa; dikerjakan paling belakang (keputusan user)** |
+| **M5**    | Topup QRIS: PG Aggregate charge + webhook HMAC + idempotency + notif | ✅ selesai (v1.13 flow + **v1.48 API**): menu/flow ✅; v1.48 `internal/repository/kts` (S2S HMAC + create/confirm/verify charge, amount = NET) + webhook `pg.charge` + settlement idempoten (migrasi 000007, `KTS_*`) |
 | **M6**    | Trial, notifikasi kadaluarsa, sync traffic, multi-server, perintah admin | ✅ selesai (v1.21 → v1.40): Trial · Notifikasi kadaluarsa · Sync traffic · **Admin lengkap (harga/broadcast/ban-unban + manajemen server + statistik + audit log, v1.40)** · adjust saldo (v1.39) |
-| **M7**    | Hardening: test penuh, race, load test, staging, UAT, dokumentasi | 🔶 partial (v1.22 → v1.46): coverage gap ✅ · race ✅ · load test ✅ · UAT checklist ✅ · **FR-08/14/15 lengkap (v1.25–v1.35) · renew paid-only + idempotence + auto-refund (v1.37–v1.38) · UX zigzag + brand (v1.42–v1.44) · worker health check + trial cleanup (v1.45) · FR-13 subscription URL (v1.46) ✅** — sisa: eksekusi UAT item yang butuh user non-admin/akun mendekati expiry/prasyarat panel (docs/002, 46 item) + demo E2E beli → QRIS (menunggu API final) |
+| **M7**    | Hardening: test penuh, race, load test, staging, UAT, dokumentasi | 🔶 partial (v1.22 → v1.48): coverage gap ✅ · race ✅ · load test ✅ · UAT checklist ✅ · **FR-08/14/15 lengkap (v1.25–v1.35) · renew paid-only + idempotence + auto-refund (v1.37–v1.38) · UX zigzag + brand (v1.42–v1.44) · worker health check + trial cleanup (v1.45) · FR-13 subscription URL (v1.46) ✅** + **purchase debit-first + auto-refund (v1.47) ✅** + **M5 selesai — PG Aggregate charge + webhook pg.charge (v1.48) ✅** — sisa: eksekusi UAT item yang butuh user non-admin/akun mendekati expiry/prasyarat panel (docs/002, 46 item) + demo E2E beli → QRIS → akun aktif (prasyarat merchant `KTS_*` live) |
 | **Total** |                                                                      | **± 4–6 minggu** |
 
 **Exit criteria v1:** semua AC FR-01 s.d. FR-15 lolos; `go test -race ./...`
@@ -952,9 +973,9 @@ terkena perubahan apa pun.
 | Update Telegram bersamaan pada user sama | State machine korup | Serialisasi per-user (Redis lock) + worker pool bounded |
 | Rate-limit Telegram 429 | Notifikasi/aksi gagal | Hormati `Retry-After`; antrian notifikasi; backoff |
 | Secret bocor lewat log | Kompromi akses | Redaksi secret; `log/slog` tanpa nilai rahasia; audit log akses |
-| Gangguan panel saat order diproses | Order failed | Retry 2× backoff; status `failed` tanpa debit; user bisa ulang |
+| Gangguan panel saat order diproses | Order failed | Retry 2× backoff; alur debit-first + auto-refund (v1.47) — gagal sebelum debit → tanpa potong, gagal setelah debit → refund otomatis + ledger; user bisa ulang |
 | Kehilangan kredibilitas harga (salah hitung) | Klaim refund | Harga hanya dari `pricing`; audit `balance_before/after`; test aritmatika `Money` |
-| API payment (KentangTech) berubah / down | Topup gagal, komplain user | Kontrak dipin §15.7; retry + timeout 30s; alert admin; pesan ramah ke user |
+| API payment (KentangTech PG) berubah / down | Topup gagal, komplain user | Kontrak dipin §15.7 (015/013); timeout eksplisit; webhook non-2xx → retry gateway (max 5, backoff 30 s×attempt → dead-letter); poll `GET /api/v1/pg/charges/{orderId}` utk fallback; alert admin; pesan ramah ke user |
 | QRIS QR gagal dirender (lib QR) | User tak bisa scan | Fallback tampilkan `qr_string` teks; pilih lib stabil; golden test |
 
 ---
@@ -1066,7 +1087,7 @@ terkena perubahan apa pun.
 |--------|------|------|--------|-----------|
 | GET | `/api/v1/health` | — | Liveness/readiness bot | M0 ✅ |
 | POST | `/api/v1/webhooks/telegram` | secret token header | Ingestion update Telegram (`WEBHOOK_PATH`, configurable) | M3 |
-| POST | `/api/v1/webhooks/payments` | HMAC `X-KTS-Signature` | Callback pembayaran QRIS | M5 |
+| POST | `/api/v1/webhooks/payments` | HMAC `X-Webhook-Signature` (+ `X-Webhook-Event`, dedup `X-Webhook-Id`) | Callback `pg.charge` pembayaran QRIS | M5 ✅ |
 | POST | `/api/v1/servers` | `X-API-Key` | Registrasi server X-UI (porting `server_registration.py`) | M2/M6 |
 | GET | `/api/v1/servers` | `X-API-Key` | List server | M6 |
 | GET | `/api/v1/servers/{id}` | `X-API-Key` | Detail server | M6 |
@@ -1092,6 +1113,8 @@ terkena perubahan apa pun.
 
 | Versi | Tanggal     | Perubahan                                                                                                   |
 |-------|-------------|-------------------------------------------------------------------------------------------------------------|
+| v1.48 | 2026-08-18  | **M5 selesai — PG Aggregate charge + webhook HMAC (FR-06; kontrak nyata 015/013, bukan `autobuy-saldo`; keputusan user: amount = NET, gross-up di-handle gateway)**. (1) `internal/repository/kts` (baru): `signer.go` — canonical S2S `v1\n{apiKey}\n{ts}\n{nonce}\n{METHOD}\n{path}\n{hex_sha256(body)}` + `X-Signature: sha256=...` (001 §2.3) & `WebhookSignature` (HMAC raw body, 013 §2.2); `gateway.go` — `CreateCharge`/`ConfirmCharge`/`GetCharge` (poll), header `X-API-Key/X-Timestamp/X-Nonce/Idempotency-Key`, timeout eksplisit, mapping 409→duplicate / 404→not-found / 401→unauthorized, envelope `data` / `error{code,message}`; `types.go` — DTO schema-first (CDD §2.4). (2) Persistensi: migration `000007_payments_telegram` (kolom `payments.telegram_id` + index) + `PaymentRepo` (`Create`/`Get`/`SaveProviderRef`/`MarkFailed`/`MarkSettledTx` — conditional pending→terminal, kunci anti double-credit; `schema_test` disinkron). (3) `service/topup` rewrite: **`StubGateway` DIHAPUS** — `CreatePayment` = persist row dulu (orderId `tp_*` → `orders`+`payments`) → create charge (NET) → confirm → `checkoutUrl` (pola Phase 3); `ApplySettlement` = kredit NET lokal + mark dalam SATU transaksi (webhook & poll race aman); `succeeded`→kredit, `failed`/`expired`→tanpa kredit; notif user + grup admin best-effort (adapter `cmd/bot/topup_notify.go`). (4) Webhook `POST /api/v1/webhooks/payments` (sebelumnya 501): verifikasi `X-Webhook-Signature` (raw body, constant-time) → 403; branch `X-Webhook-Event: pg.charge`; dedup `X-Webhook-Id` Redis SETNX (TTL 7 hari); settle → **2xx hanya setelah durable**, 5xx → gateway retry. (5) Config + wiring: `KTS_BASE_URL`/`KTS_API_KEY`/`KTS_SECRET` (required, fail-fast) + `KTS_CHARGE_TTL_MIN` (default 24 jam); `buildShop` wire kts client + notifier; `main.go` Options. (6) Teks: `TopupPaymentText` (link checkout QRIS), `TopupSettledText`, `AdminTopupNoticeText`. Test: signer vector, gateway httptest (201/202/404/409/401), topup service (Quote/CreatePayment/ApplySettlement), webhook (signature valid/salah, event salah, duplikat, settle sukses/expired), handler telegram topup. Semua hijau: build/vet/gofmt + `test -race` (kts/topup/http/config), semua file < 250 baris. Poll fallback dilimpahkan ke gateway (reconciler 015 Phase 6.1); `kts.GetCharge` siap utk poll manual. |
+| v1.47 | 2026-08-17  | **Purchase debit-first + auto-refund (FR-04 AC-1; keputusan user — parity renew v1.37; menggantikan rencana worker reconciliation Phase 3)**. Alur baru: `prepare client` (read-only: inbound + kredensial + share link, TANPA sentuh panel) → **insert row `vpn_clients`** → **debit saldo atomik** (guard `balance >= harga`, tidak pernah minus) → **commit panel** (`addClient`); gagal commit → **refund otomatis** (Credit + ledger + hapus row), order `failed` — akun aktif tanpa bayar mustahil; gagal sebelum debit → `failed` bersih. (1) `domain.PreparedClient` (record bot-side + param commit); (2) `service/server/provision.go` (baru) — split `provisionClient` → `PrepareClient` + `CommitClient`; `CreateClient`/`CreateTrialClient` rebuild dari pola ini; (3) interface `PanelGateway`/`ClientStore` (`service/order/order.go`) di-update; (4) `service/order/purchase.go` rewrite; (5) test di-update (asersi urutan + commit-failure → refund + hapus row), `provision_subid_test.go` baru (fix bug: `prepareClient` tidak mengisi `SubID` → sub URL FR-13 kosong). Semua hijau: build/vet/gofmt + `test -race` (domain/order/server/telegram), file < 250 baris. |
 | v1.44 | 2026-08-12  | **Konsistensi brand ditutup (3 catatan review v1.43, keputusan user)**: (1) **Ringkasan konfirmasi** kini ber-brand — `BuyConfirmText`, `RenewConfirmText`, `TrialConfirmText` dibuka `BrandHeader()` (simetris dengan Ringkasan Top Up yang sudah ber-brand v1.43); (2) **Ejaan brand diseragamkan** — header ekspor `.txt` `=== AKUN VPN KENTANGTECH ===` → `=== AKUN VPN KENTANG TECH ===` (dari `BrandName`), `HomeText` sambutan `/start` "KentangTech VPN Bot" → `KENTANG TECH VPN Bot` (dari `BrandName`), `HelpInfoText` (`help:info`) "KentangTech VPN Bot" → `%s VPN Bot` via `fmt.Sprintf(BrandName)` (raw string dikonversi, import `fmt` ditambah) — tidak ada lagi ejaan legacy di copy user-facing; (3) **Pesan gagal ber-brand** — `BuyFailedText` + `TrialFailedText` dibuka `BrandHeader()`. Test: `menu_test.go` `TestHomeText` update `KentangTech`→`BrandName`; `menu_brand_test.go` diperluas — 5 template baru (3 ringkasan konfirmasi + 2 pesan gagal) masuk daftar HasPrefix banner + `TestBrandSpelling_ThenSingleBrandEverywhere` baru (txt/home/info memuat `BrandName`, TIDAK pernah `KentangTech`/`KENTANGTECH`/`KENTANG TECH STORE`). Semua hijau: build/vet/gofmt/`test -race` (21 paket) + golangci-lint, semua file < 250 baris. Review: tanpa bug (1 nit komentar usang v1.43→v1.43/v1.44, diperbaiki). E2E staging v144: verifikasi brand di alur nyata (bawah). |
 | v1.46 | 2026-08-12  | **FR-13 Subscription URL — gap terakhir (bagian (a) subscription URL; bagian (b) share link per protokol sudah selesai v1.26–v1.33)**. Sub server panel (Opsi 2 — domain sama dengan panel, port beda; default subPort 2096) sudah menerima `subId` di setiap client sejak provisioning (beli & trial), tapi bot tidak pernah menyimpannya. Implementasi: (1) config `internal/config/subscription.go` — `SUB_ENABLED` (default false) / `SUB_BASE_URL` / `SUB_PATH` (default `/sub`, trailing slash dinormalisasi) / `SUB_JSON_ENABLED` + `SUB_JSON_PATH` (default `/json`); validate: saat enabled `SUB_BASE_URL` wajib http(s) valid; (2) migrasi `000006` — `vpn_clients.sub_id` + `subscription_json_url` (nullable, tanpa index — bot tidak pernah query by subId); akun lama kosong = **legacy gap terdokumentasi (keputusan user: tanpa backfill)**; (3) domain `PanelClient.SubID` + `VPNClient.SubID/SubscriptionJSONURL`; `serversvc.provisionClient` kini mengembalikan `pc.SubID = spec.SubID` (nilai yang sama yang dikirim ke panel); (4) `ordersvc.SubLinks` (value type, join URL kanonik — robust thd trailing slash; `SetSubLinks` setter agar variadic notify di `New` tetap backward-compatible) → `Purchase` & `CreateTrial` persist `sub_id` + `subscription_url` + `subscription_json_url` (JSON hanya bila `SUB_JSON_ENABLED` — gating di wiring `cmd/bot/shop.go`); `toClientRow` memetakan field baru; (5) **Ekspor .txt** (keputusan user: URL HANYA di ekspor — konsisten v1.36): `AccountTXTContent` menambahkan blok `Subscription URL (auto-update)` + `Subscription JSON (Clash/Meta)`; akun legacy (kolom kosong) dilewati; hint "Cara pakai" update (import Config Link atau Subscription URL). Test baru: config (defaults off, enabled-valid, invalid base URL / path), `provision_subid_test.go` (SubID terkirim ke panel == yang dikembalikan), ordersvc (client row membawa SubID/SubscriptionURL/JSONURL + join kanonik), export (blok sub tampil bila ada / absen untuk legacy). Semua hijau: build/vet/gofmt/`test -race` + golangci-lint, semua file < 250 baris. Review: 2 cleanup diterapkan — guard join `//` saat path bare "/" (SubLinks public type), closure JSONPath di shop.go diganti variabel lokal. |
 | v1.45 | 2026-08-12  | **Worker health check (PRD §17) + worker trial cleanup (gap audit — 2 kolom yang selama ini ada tapi tidak pernah diisi worker)**: (1) `internal/service/health` — `RunOnce` ping tiap panel aktif (`GET /xui/API/server/status`, per-server timeout `XUI_API_TIMEOUT`) → tulis `health_status` (`ok`/`down`) + `last_health_check` (`server_health.go` `ListHealthTargets`/`UpdateHealth`); **server mati tidak dijual** — `ListBuyable` kini `IS DISTINCT FROM 'down'` (default kolom `'unknown'` tetap dijual agar boot pertama tidak hilang; filter HANYA mengecualikan `down`); (2) `internal/service/trialcleanup` — `RunOnce` list kandidat (trial aktif, `expires_at <= now()`) → group per server → `serversvc.DisableClients` (satu `GetInbounds` per panel, spec raw client di-patch `enable=false` — kuota/ipLimit/flow dipertahankan; kunci updateClient per-protocol di-extract dari spec: vless/vmess→id, trojan→password, ss→email, hysteria→auth) → **baru** `MarkTrialExpired` (is_active=false + is_expired=true; row tetap di Akun Saya, badge Trial + status Expired); **panel gagal → DB tidak ditandai** (retry sweep berikutnya); client sudah hilang di panel = sukses; (3) wiring `cmd/bot`: kedua worker via `job.NewIntervalWorker` (sweep pertama langsung, ctx cancel + WaitGroup drain — pola sama traffic sync), sweep timeout fleet-sized; config baru `HEALTH_CHECK_ENABLED/INTERVAL_SEC` (default true/60s) + `TRIAL_CLEANUP_ENABLED/INTERVAL_MIN/BATCH` (default true/15m/50) di `config/health.go` + `config/trialcleanup.go` (Defaults dipindah ke `config/defaults.go` agar config.go < 250 baris; main.go tetap 248 baris). Test: `health_test.go` (4: all-ok, down-isolasi, build-fail→down, no-target), `trialcleanup_test.go` (4: disable+mark, panel-fail tidak menandai, no-candidate, satu server gagal→lain tetap), `disable_test.go` (5: key vless/trojan/hysteria, missing skip, panel fail), `repo_health_test.go` (3 integrasi: target/status persist, buyable filter down-excluded, kandidat trial + mark), config_test diperluas. Review: 2 perbaikan diterapkan — error `MarkTrialExpired` kini dihitung sebagai kegagalan server, `DisableClients` early-return saat emails kosong. **Fix E2E (ditemukan uji fake server mati)**: budget per-server XUI habis oleh connect timeout panel mati → `UpdateHealth`/`MarkTrialExpired` dipanggil dengan context kadaluarsa → status `down` TIDAK pernah tersimpan (server mati tetap dijual). Solusi: DB write memakai context terpisah — `healthWriteTimeout` (10s, parent ctx) untuk health, parent ctx untuk mark trial; error wrap dobel dibersihkan. Test baru: `TestRunOnce_GivenPanelExhaustsBudget_ThenStatusStillPersisted` + `TestRunOnce_GivenPartialDisableThenTimeout_ThenOnlyConfirmedMarked`. Verified staging: fake server `192.0.2.1:1` → `health_status='down'` terpersist, JP hilang dari ListBuyable/buy menu. Semua hijau: build/vet/gofmt/`test -race` + golangci-lint, semua file < 250 baris. |

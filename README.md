@@ -137,15 +137,16 @@ flowchart TB
         TRF["traffic — sync + refresh manual"]
         EXP["expiry — notifikasi H-7/H-3/H-1"]
         ADM["admin — FR-11 (harga/server/saldo/statistik/audit)"]
-        TOP["topup — QRIS (stub, M5)"]
+        TOP["topup — PG Aggregate QRIS (M5)"]
         HLTH["health — server mati tidak dijual"]
         TCL["trial-cleanup — disable trial expired"]
     end
 
     subgraph REPO["repository layer"]
-        PG[("PostgreSQL — users/orders/clients/servers/pricing/ledger")]
+        PG[("PostgreSQL — users/orders/clients/servers/pricing/ledger/payments")]
         RD[("Redis — session panel, dedup, lock, FSM, counter")]
         XUI["XUI client — REST API panel (login + session cache)"]
+        KTS["KTS client — PG Aggregate charge (S2S HMAC)"]
     end
 
     subgraph WRK["worker (IntervalWorker)"]
@@ -159,6 +160,8 @@ flowchart TB
     SVC --> REPO
     WRK --> SVC
     XUI -->|login + session cookie| API["REST /xui/API/* panel"]
+    KTS -->|POST /api/v1/pg/charges| GATEWAY["KentangTech PG Aggregate (QRIS)"]
+    GATEWAY -->|webhook pg.charge| HTTP
 ```
 
 ## Install Bot (Order)
@@ -188,7 +191,8 @@ sudo systemctl enable --now redis-server
 cd bot
 cp .env.example .env
 # isi: BOT_TOKEN, BOT_DOMAIN (HTTPS), WEBHOOK_SECRET, DATABASE_URL, REDIS_URL,
-#      ENCRYPTION_KEY, ADMIN_IDS, NOTIFICATION_GROUP_ID, PANEL_1_* (panel X-UI)
+#      ENCRYPTION_KEY, ADMIN_IDS, NOTIFICATION_GROUP_ID, PANEL_1_* (panel X-UI),
+#      KTS_BASE_URL, KTS_API_KEY, KTS_SECRET (PG Aggregate payment, M5)
 
 # 3. Build & uji
  go build ./... && go vet ./...
