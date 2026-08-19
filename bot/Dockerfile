@@ -17,6 +17,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=build /out/bot /app/bot
+COPY seed/ /app/seed/
 
 EXPOSE 8443
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
