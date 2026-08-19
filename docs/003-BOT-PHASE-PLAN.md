@@ -3,7 +3,7 @@
 | Field         | Value                                                              |
 |---------------|--------------------------------------------------------------------|
 | **Dokumen**   | 003-BOT-PHASE-PLAN                                                  |
-| **Status**    | Draft — Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ (wire PG Aggregate + sync docs §1.9: PRD/README/SYSTEM_MAP/.env.example/UAT disinkron v1.48) |
+| **Status**    | Draft — Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ (PG Aggregate + sync v1.48) · Phase 5 ✅ (admin REST API §26.5 + sync v1.49) |
 | **Tanggal**   | 2026-08-17                                                          |
 | **Penulis**   | Dodi Rusmana `<rusmanadodi@kentangtechstore.com>`                   |
 | **Scope**     | Hanya `/bot` — panel x-ui **tidak boleh berubah**                   |
@@ -224,6 +224,37 @@ order, tanpa kredit. Webhook & poll saling idempoten (kredit sekali).
 
 **Catatan:** `KTS_SECRET` = secretKey merchant tunggal — dipakai utk signing
 outbound S2S DAN verifikasi inbound `X-Webhook-Signature` (013 §2.2).
+
+---
+
+## Phase 5 — Admin REST API §26.5 (servers CRUD + orders/users read + topup trigger)
+
+**Gap:** endpoint di `§26.5` katalog tertunda "nanti" — servers CRUD, orders/users read,
+dan payments/topups trigger belum terwired; admin hanya bisa via Telegram.
+
+### 5.1 Scope teknis
+
+- Config: `REST_API_KEY` (opsional — kosong = surface tidak terdaftar).
+- Auth: `X-API-Key` header constant-time → `withAPIKey` middleware.
+- Repo `server_rest.go`: `GetAdminByID` (safe tanpa password), `UpdateServer`
+  (password di-seal ulang), `DeleteServer` (guard: 409 bila ada client —
+  mencegah cascade `ON DELETE CASCADE`)
+- Service `server_rest.go`: `GetAdminByID`, `UpdateServer`, `DeleteServer`,
+  `CheckHealth` (seam `statusFactory`)
+- Handler: `api.go` (auth + envelope + `registerAdminAPI`), `servers_api.go`,
+  `orders_api.go`, `users_api.go`, `topup_api.go`
+- Wiring: expose `OrderRepo`/`ClientRepo`/`UserRepo` dari `shopBundle`
+
+### 5.2 AC Phase 5
+
+- [x] `REST_API_KEY` kosong → surface tidak terdaftar (404)
+- [x] `X-API-Key` salah/missing → 401 tanpa proses
+- [x] Server read **tanpa** `password_enc`/`username`; client read tanpa kredensial
+- [x] `DELETE /servers/{id}` → 409 bila ada client (guard cascade)
+- [x] `POST /payments/topups` → Quote (validasi min/max) → CreatePayment (PG)
+- [x] Envelope §26.4 konsisten (data/meta/error)
+- [x] Build/vet/gofmt + `go test -race` hijau; file < 250 baris
+- [x] Doc sync §1.9 (PRD §26.5, SYSTEM_MAP, README, bot/README, .env.example)
 
 ---
 

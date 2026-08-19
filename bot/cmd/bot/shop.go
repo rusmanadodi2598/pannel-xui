@@ -56,6 +56,10 @@ type shopBundle struct {
 	Health       *healthsvc.Service       // PRD §17: server mati tidak dijual
 	TrialCleanup *trialcleanupsvc.Service // PRD worker: disable expired trials
 	Topup        *topupsvc.Service        // Phase 4: PG charge topup + settlement
+	// REST API (PRD §26.5): read seams exposed for the /api/v1 admin surface.
+	OrderRepo  *postgres.OrderRepo
+	ClientRepo *postgres.ClientRepo
+	UserRepo   *postgres.UserRepo
 }
 
 // buildShop seeds pricing & panels and wires the M4 shop, M6 trial and M6
@@ -181,6 +185,7 @@ func buildShop(ctx context.Context, cfg *config.Config, db *postgres.Repository,
 	return &shopBundle{
 		Shop: shop, Admin: admin, Servers: servers, Traffic: trafficSvc,
 		Health: healthSvc, TrialCleanup: cleanupSvc, Topup: topups,
+		OrderRepo: orderRepo, ClientRepo: clientRepo, UserRepo: userRepo,
 	}, nil
 }
 

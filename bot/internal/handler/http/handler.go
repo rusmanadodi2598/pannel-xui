@@ -1,7 +1,7 @@
 // Package httphandler serves the /api/v1 HTTP surface (REST convention §26).
 //
 // @file      internal/handler/http/handler.go
-// @for       Route registration for /api/v1/*, request logging, webhook stubs.
+// @for       Route registration for /api/v1/*, request logging, webhooks.
 // @uses      internal/config, net/http, log/slog, crypto/subtle
 // @reason    Owns the HTTP boundary so cmd/bot stays a pure composition root (AGENTS.md §1.5).
 // @author    Dodi Rusmana <rusmanadodi@kentangtechstore.com>
@@ -58,10 +58,19 @@ type Options struct {
 	// merchant secretKey used to verify X-Webhook-Signature (013 §2.2).
 	Topup                TopupSettler
 	PaymentWebhookSecret string
+
+	// Admin REST API (PRD §26.5). RESTAPIKey empty disables the surface; the
+	// concrete seams are wired from buildShop (composition root, §1.5).
+	RESTAPIKey string
+	Servers    ServerAdmin
+	Orders     OrderAdmin
+	Clients    ClientReader
+	Users      UserResolver
+	Topups     TopupTrigger
+	Location   *time.Location
 }
 
 // New builds the /api/v1 router wrapped in the request logger.
-// Webhook processing lands in later milestones; stubs answer 501.
 // It panics on a malformed WebhookPath because net/http patterns require a
 // leading '/' and an invalid path would only fail at the first request.
 func New(opts Options) http.Handler {
@@ -83,6 +92,9 @@ func New(opts Options) http.Handler {
 	// POST /api/v1/webhooks/payments — pg.charge settlement (013 §2, Phase 4):
 	// verifikasi X-Webhook-Signature, dedup X-Webhook-Id, kredit net atomik.
 	mux.HandleFunc("POST "+apiBase+"/webhooks/payments", opts.paymentsWebhook)
+
+	// Admin REST API (PRD §26.5) — no-op unless RESTAPIKey is set.
+	opts.registerAdminAPI(mux)
 
 	return requestLogger(opts.Logger, mux)
 }

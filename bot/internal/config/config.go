@@ -35,19 +35,22 @@ type Config struct {
 	RedisDialTimeout      time.Duration
 	EncryptionKey         []byte
 	AdminIDs              []int64
-	RequiredGroupID       int64
-	RequiredGroupLink     string
-	NotificationGroupID   int64
-	ExpiryNotifyDays      []int
-	RateLimitRequests     int
-	TimeLocation          *time.Location
-	XUIAPITimeout         time.Duration
-	APIBaseURL            string
-	MinTopupAmount        int
-	MaxTopupAmount        int
-	QRISFeePercent        float64
-	QRISPPNPercent        float64
-	QRISExpiryMinutes     int
+	// RESTAPIKey guards the admin REST API (X-API-Key header, PRD §26.5).
+	// Empty disables the admin REST surface — the routes are not registered.
+	RESTAPIKey          string
+	RequiredGroupID     int64
+	RequiredGroupLink   string
+	NotificationGroupID int64
+	ExpiryNotifyDays    []int
+	RateLimitRequests   int
+	TimeLocation        *time.Location
+	XUIAPITimeout       time.Duration
+	APIBaseURL          string
+	MinTopupAmount      int
+	MaxTopupAmount      int
+	QRISFeePercent      float64
+	QRISPPNPercent      float64
+	QRISExpiryMinutes   int
 	// KTS: PG Aggregate merchant credentials (Phase 4, contract 015/001 §2.3).
 	// KTSSecret is the same secretKey used for outbound S2S signing and inbound
 	// X-Webhook-Signature verification (013 §2.2).
@@ -124,6 +127,7 @@ func Load() (*Config, error) {
 		RedisURL:          getEnv("REDIS_URL", ""),
 		RequiredGroupLink: getEnv("REQUIRED_GROUP_LINK", ""),
 		APIBaseURL:        getEnv("API_BASE_URL", ""),
+		RESTAPIKey:        getEnv("REST_API_KEY", ""),
 		KTSBaseURL:        getEnv("KTS_BASE_URL", ""),
 		KTSAPIKey:         getEnv("KTS_API_KEY", ""),
 		KTSSecret:         getEnv("KTS_SECRET", ""),

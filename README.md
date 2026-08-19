@@ -122,6 +122,7 @@ flowchart TB
     subgraph HTTP["handler/http"]
         DEDUP["Dedup update_id (Redis SETNX 24 jam)"]
         POOL["Worker pool bounded + per-user lock"]
+        REST["Admin REST API (X-API-Key) — servers · orders · users · topup trigger"]
     end
 
     subgraph DISP["handler/telegram — dispatcher"]
@@ -162,6 +163,7 @@ flowchart TB
     XUI -->|login + session cookie| API["REST /xui/API/* panel"]
     KTS -->|POST /api/v1/pg/charges| GATEWAY["KentangTech PG Aggregate (QRIS)"]
     GATEWAY -->|webhook pg.charge| HTTP
+    REST --> SVC
 ```
 
 ## Install Bot (Order)

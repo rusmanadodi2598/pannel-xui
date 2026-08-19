@@ -166,18 +166,25 @@ func TestDeleteClient_GivenUnknownServer_ThenErrorBeforePanelCall(t *testing.T) 
 // --- fakes ---
 
 type fakeServerStore struct {
-	upserted  []postgres.VPNServer
-	buyable   []postgres.ServerView
-	all       []postgres.ServerAdminView
-	byID      *postgres.VPNServer
-	byIDErr   error
-	created   *postgres.VPNServer
-	createErr error
-	dup       *postgres.VPNServer
-	setOpen   *bool
-	setActive *bool
-	toggledID int64
-	toggleErr error
+	upserted     []postgres.VPNServer
+	buyable      []postgres.ServerView
+	all          []postgres.ServerAdminView
+	byID         *postgres.VPNServer
+	byIDErr      error
+	created      *postgres.VPNServer
+	createErr    error
+	dup          *postgres.VPNServer
+	setOpen      *bool
+	setActive    *bool
+	toggledID    int64
+	toggleErr    error
+	adminView    postgres.ServerAdminView
+	adminViewErr error
+	updatedID    int64
+	updated      postgres.ServerUpdate
+	updateErr    error
+	deletedID    int64
+	deleteErr    error
 }
 
 func (f *fakeServerStore) UpsertSeed(_ context.Context, s postgres.VPNServer) error {
@@ -208,6 +215,17 @@ func (f *fakeServerStore) Create(_ context.Context, s *postgres.VPNServer) error
 }
 func (f *fakeServerStore) FindByHostPort(context.Context, string, int, string) (*postgres.VPNServer, error) {
 	return f.dup, nil
+}
+func (f *fakeServerStore) GetAdminByID(context.Context, int64) (postgres.ServerAdminView, error) {
+	return f.adminView, f.adminViewErr
+}
+func (f *fakeServerStore) UpdateServer(_ context.Context, id int64, up postgres.ServerUpdate) error {
+	f.updatedID, f.updated = id, up
+	return f.updateErr
+}
+func (f *fakeServerStore) DeleteServer(_ context.Context, id int64) error {
+	f.deletedID = id
+	return f.deleteErr
 }
 
 var errNotFound = errors.New("server not found")

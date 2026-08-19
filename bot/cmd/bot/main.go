@@ -184,6 +184,14 @@ func run() error {
 		// dan verifikasi X-Webhook-Signature (013 §2.2).
 		Topup:                bundle.Topup,
 		PaymentWebhookSecret: cfg.KTSSecret,
+		// Admin REST API (PRD §26.5) — diaktifkan hanya bila REST_API_KEY set.
+		RESTAPIKey: cfg.RESTAPIKey,
+		Servers:    bundle.Servers,
+		Orders:     bundle.OrderRepo,
+		Clients:    bundle.ClientRepo,
+		Users:      bundle.UserRepo,
+		Topups:     bundle.Topup,
+		Location:   cfg.TimeLocation,
 	})
 
 	return serve(ctx, cfg, handler, logger)

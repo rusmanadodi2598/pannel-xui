@@ -101,6 +101,30 @@ readable (PRD §26):
 | GET    | `/api/v1/health` (cek DB+Redis)             | ✅     | M1        |
 | POST   | `/api/v1/webhooks/telegram`                 | ✅     | M3        |
 | POST   | `/api/v1/webhooks/payments`                 | ✅     | M5 (v1.48) |
+| POST   | `/api/v1/servers` (registrasi server)       | ✅     | v1.49     |
+| GET    | `/api/v1/servers` (list, tanpa kredensial)  | ✅     | v1.49     |
+| GET    | `/api/v1/servers/{id}` (detail tanpa PW)   | ✅     | v1.49     |
+| PATCH  | `/api/v1/servers/{id}` (update, PW di-seal) | ✅     | v1.49     |
+| DELETE | `/api/v1/servers/{id}` (guard: 409 bila ada client) | ✅ | v1.49   |
+| GET    | `/api/v1/servers/{id}/health` (probe live)  | ✅     | v1.49     |
+| GET    | `/api/v1/orders` (stats + recent)           | ✅     | v1.49     |
+| GET    | `/api/v1/orders/{orderId}` (detail)         | ✅     | v1.49     |
+| GET    | `/api/v1/users/{telegramID}/orders` (paged) | ✅     | v1.49     |
+| GET    | `/api/v1/users/{telegramID}/clients` (paged, credential-free) | ✅ | v1.49 |
+| POST   | `/api/v1/payments/topups` (trigger QRIS)    | ✅     | v1.49     |
+
+### Admin REST API (v1.49)
+
+- Guard `X-API-Key` header (constant-time) terhadap env `REST_API_KEY`.
+- `REST_API_KEY` kosong → surface **tidak terdaftar** (404).
+- Server read **tanpa** `password_enc` / `username`; client read tanpa
+  `uuid`/`password`/`subId`/`config_link`/`subscription_url`.
+- `DELETE /servers/{id}` → **409** bila server masih punya client (guard
+  `ON DELETE CASCADE`).
+- `POST /payments/topups`: resolve `telegram_id` → `Quote` (validasi min/max)
+  → `CreatePayment` (PG Aggregate, amount = NET).
+- Envelope §26.4: `{"data": ...}` / `{"data": ..., "meta": {page, limit, total}}`
+  / `{"code": "...", "message": "..."}`.
 
 ## X-UI Client (M2)
 

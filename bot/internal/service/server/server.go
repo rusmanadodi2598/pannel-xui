@@ -37,6 +37,9 @@ type Store interface {
 	SetActive(ctx context.Context, id int64, active bool) error
 	Create(ctx context.Context, s *postgres.VPNServer) error
 	FindByHostPort(ctx context.Context, host string, port int, username string) (*postgres.VPNServer, error)
+	GetAdminByID(ctx context.Context, id int64) (postgres.ServerAdminView, error)
+	UpdateServer(ctx context.Context, id int64, up postgres.ServerUpdate) error
+	DeleteServer(ctx context.Context, id int64) error
 }
 
 // SessionCache is the xui.SessionCache seam (Redis adapter in repository/redis).
@@ -54,12 +57,18 @@ type Service struct {
 	// panelFactory builds the authenticated panel client; tests override it
 	// with a fake (same seam pattern as ordersvc.newID).
 	panelFactory func(ctx context.Context, serverID int64) (inboundLister, error)
+	// statusFactory builds the health-probe panel (REST /servers/{id}/health);
+	// tests override it with a fake (PRD §26.5).
+	statusFactory func(ctx context.Context, serverID int64) (statusProber, error)
 }
 
 // New builds the server service. cache may be nil (no session persistence).
 func New(store Store, box *crypto.SecretBox, cache SessionCache) *Service {
 	s := &Service{store: store, box: box, cache: cache}
 	s.panelFactory = func(ctx context.Context, serverID int64) (inboundLister, error) {
+		return s.PanelClient(ctx, serverID)
+	}
+	s.statusFactory = func(ctx context.Context, serverID int64) (statusProber, error) {
 		return s.PanelClient(ctx, serverID)
 	}
 	return s

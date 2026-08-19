@@ -187,6 +187,9 @@
 
 ## 4. Topup (FR-06, M5 ✅ — v1.48)
 
+> Checklist eksekusi E2E (create → checkout → bayar → webhook → kredit) ada di
+> `docs/004-TOPUP-E2E-CHECKLIST.md` — jalankan begitu merchant `KTS_*` live.
+
 - [x] Top Up → pilih nominal / input custom → ringkasan (fee QRIS + PPN)
       *(verified staging v1.13 (M5) + v142: topup:menu render; ringkasan
       ber-brand v1.43)*
